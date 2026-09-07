@@ -39,6 +39,10 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            ->discoverPages(
+                in: app_path('Filament/Pages'),
+                for: 'App\\Filament\\Pages',
+            )
             ->favicon(asset('images/favicon.ico'))
             ->brandLogo(asset('images/logo.svg'))
             ->brandLogoHeight('2rem')
