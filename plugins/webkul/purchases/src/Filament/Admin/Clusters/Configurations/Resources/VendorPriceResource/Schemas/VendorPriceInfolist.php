@@ -15,7 +15,7 @@ class VendorPriceInfolist
             ->components([
                 Group::make()
                     ->schema([
-                        Section::make(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.general.entries'))
+                        Section::make(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.general.title'))
                             ->icon('heroicon-o-information-circle')
                             ->schema([
                                 TextEntry::make('partner.name')
@@ -41,7 +41,7 @@ class VendorPriceInfolist
 
                 Group::make()
                     ->schema([
-                        Section::make(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.prices.entries'))
+                        Section::make(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.prices.title'))
                             ->icon('heroicon-o-currency-dollar')
                             ->schema([
                                 TextEntry::make('product.name')
@@ -56,7 +56,7 @@ class VendorPriceInfolist
                                         TextEntry::make('price')
                                             ->label(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.prices.entries.unit-price'))
                                             ->icon('heroicon-o-banknotes')
-                                            ->money(fn ($record) => $record->currency->code ?? 'USD'),
+                                            ->money(fn ($record) => $record->currency->code ?? default_currency_code()),
 
                                         TextEntry::make('currency.name')
                                             ->label(__('purchases::filament/admin/clusters/configurations/resources/vendor-price.infolist.sections.prices.entries.currency'))

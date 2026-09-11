@@ -90,6 +90,8 @@ class InstallERP extends Command
 
         Event::dispatch('aureus.installed');
 
+        $this->warnOnEnvCurrencyMismatch();
+
         $this->info('🎉 ERP System installation completed successfully!');
     }
 
@@ -293,6 +295,32 @@ class InstallERP extends Command
         ]);
 
         $this->defaultCurrencyId = $currency->id;
+    }
+
+    /**
+     * Warn when the .env currency no longer matches the installed base currency.
+     */
+    protected function warnOnEnvCurrencyMismatch(): void
+    {
+        if (! $this->defaultCurrencyId) {
+            return;
+        }
+
+        $installed = Currency::find($this->defaultCurrencyId)?->code;
+
+        $configured = env('APP_CURRENCY');
+
+        if (blank($installed) || blank($configured) || strcasecmp($installed, $configured) === 0) {
+            return;
+        }
+
+        $this->newLine();
+
+        $this->warn("⚠️  Your .env still has APP_CURRENCY={$configured}, but {$installed} was installed as the base currency.");
+
+        $this->warn("   The base currency is stored in settings, so the application will use {$installed}.");
+
+        $this->warn("   Set APP_CURRENCY={$installed} in your .env so the fallback matches.");
     }
 
     /**

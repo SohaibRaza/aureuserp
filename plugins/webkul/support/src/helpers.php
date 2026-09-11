@@ -34,7 +34,25 @@ if (! function_exists('default_currency_code')) {
                 $code = null;
             }
 
-            return $code ?? config('app.currency') ?? 'USD';
+            return $code ?: config('app.currency') ?: 'USD';
+        });
+    }
+}
+
+if (! function_exists('default_currency_id')) {
+    /**
+     * The id of the currency amounts are stored in when no currency is given.
+     */
+    function default_currency_id(): ?int
+    {
+        return once(function (): ?int {
+            try {
+                $currencyId = settings(CurrencySettings::class)->default_currency_id;
+            } catch (Throwable) {
+                $currencyId = null;
+            }
+
+            return $currencyId ?: Currency::findByCode(default_currency_code())?->id;
         });
     }
 }
@@ -51,7 +69,7 @@ if (! function_exists('money')) {
     {
         $amount = $amount instanceof Closure ? $amount() : $amount;
 
-        $currency = $currency instanceof Closure ? $currency() : ($currency ?? config('app.currency'));
+        $currency = $currency instanceof Closure ? $currency() : ($currency ?? default_currency_code());
 
         $locale = $locale instanceof Closure ? $locale() : ($locale ?? config('app.locale'));
 
@@ -352,6 +370,19 @@ if (! function_exists('owned_by_company')) {
             $column = $model->getTable().'.company_id';
 
             return $query->whereNull($column)->orWhere($column, $companyId);
+        };
+    }
+}
+
+if (! function_exists('hide_deleted_unless_selected')) {
+    function hide_deleted_unless_selected(?string $state): Closure
+    {
+        return function ($query) use ($state) {
+            $query->whereNull('deleted_at');
+
+            if (filled($state)) {
+                $query->orWhere('id', $state);
+            }
         };
     }
 }

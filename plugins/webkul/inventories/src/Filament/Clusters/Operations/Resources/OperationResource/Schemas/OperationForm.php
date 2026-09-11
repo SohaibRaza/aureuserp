@@ -342,8 +342,9 @@ class OperationForm
                     ->relationship(
                         name: 'product',
                         titleAttribute: 'name',
-                        modifyQueryUsing: fn (Builder $query, Get $get) => $query
+                        modifyQueryUsing: fn (Builder $query, Get $get, ?string $state) => $query
                             ->withTrashed()
+                            ->where(hide_deleted_unless_selected($state))
                             ->where('type', ProductType::GOODS)
                             ->whereNull('is_configurable')
                             ->where(owned_by_company(static::companyIdFor($get, '../../'))),
@@ -518,6 +519,7 @@ class OperationForm
                         fn (array $arguments, Get $get): bool => filled($get("moves.{$arguments['item']}.product_id"))
                     ),
             ])
+            ->deleteAction(fn (Action $action) => $action->requiresConfirmation())
             ->deletable(fn ($record): bool => ! in_array($record?->state, [OperationState::DONE, OperationState::CANCELED]))
             ->addable(fn ($record): bool => ! in_array($record?->state, [OperationState::DONE, OperationState::CANCELED]));
     }

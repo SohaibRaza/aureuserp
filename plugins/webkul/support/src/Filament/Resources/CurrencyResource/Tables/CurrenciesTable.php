@@ -47,7 +47,7 @@ class CurrenciesTable
                     ->sortable(),
                 TextColumn::make('rounding')
                     ->label(__('support::filament/resources/currency.table.columns.rounding'))
-                    ->money('USD', divideBy: 1)
+                    ->money(fn ($record) => $record->code, divideBy: 1)
                     ->sortable(),
                 ToggleColumn::make('active')
                     ->label(__('support::filament/resources/currency.table.columns.status'))

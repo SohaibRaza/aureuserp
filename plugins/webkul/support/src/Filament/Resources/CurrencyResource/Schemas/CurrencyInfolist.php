@@ -49,7 +49,7 @@ class CurrencyInfolist
                                         TextEntry::make('rounding')
                                             ->icon('heroicon-o-arrow-path-rounded-square')
                                             ->placeholder('—')
-                                            ->money('USD', divideBy: 1)
+                                            ->money(fn ($record) => $record->code, divideBy: 1)
                                             ->label(__('support::filament/resources/currency.infolist.sections.format-information.entries.rounding')),
                                     ])->columns(2),
                             ])->columnSpan(2),
@@ -72,11 +72,11 @@ class CurrencyInfolist
                                     ->label(__('support::filament/resources/currency.infolist.sections.rates.entries.name')),
                                 InfolistTableColumn::make('rate')
                                     ->label(__('support::filament/resources/currency.infolist.sections.rates.entries.unit-per-currency', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ])),
                                 InfolistTableColumn::make('rate_temp')
                                     ->label(__('support::filament/resources/currency.infolist.sections.rates.entries.currency-per-unit', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ])),
                             ])
                             ->schema([

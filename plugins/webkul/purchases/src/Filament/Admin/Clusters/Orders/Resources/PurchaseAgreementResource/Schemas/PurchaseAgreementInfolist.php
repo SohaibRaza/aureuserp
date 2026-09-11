@@ -104,7 +104,7 @@ class PurchaseAgreementInfolist
                                         TextEntry::make('uom.name')
                                             ->visible(PurchaseAgreementResource::getProductSettings()->enable_uom),
                                         TextEntry::make('price_unit')
-                                            ->money(fn ($record) => $record->requisition->currency->code ?? 'USD'),
+                                            ->money(fn ($record) => $record->requisition->currency->code ?? default_currency_code()),
                                     ])
                                     ->columns([
                                         'sm' => 2,

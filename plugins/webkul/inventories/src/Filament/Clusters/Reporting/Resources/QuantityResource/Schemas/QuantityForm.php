@@ -10,9 +10,11 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Webkul\Inventory\Enums\LocationType;
+use Webkul\Inventory\Enums\ProductTracking;
 use Webkul\Inventory\Filament\Clusters\Products\Resources\LotResource;
 use Webkul\Inventory\Filament\Clusters\Products\Resources\PackageResource;
 use Webkul\Inventory\Filament\Clusters\Reporting\Resources\QuantityResource;
+use Webkul\Inventory\Models\Product;
 use Webkul\Inventory\Models\Warehouse;
 use Webkul\Inventory\Settings\OperationSettings;
 use Webkul\Inventory\Settings\TraceabilitySettings;
@@ -28,7 +30,7 @@ class QuantityForm
                     ->relationship(
                         name: 'product',
                         titleAttribute: 'name',
-                        modifyQueryUsing: fn (Builder $query) => $query->where('is_storable', true)->whereNull('is_configurable'),
+                        modifyQueryUsing: fn (Builder $query) => $query->where('is_storable', true)->whereNull('is_configurable')->whereNull('deleted_at'),
                     )
                     ->searchable()
                     ->preload()
@@ -72,7 +74,13 @@ class QuantityForm
                             return $data;
                         });
                     })
-                    ->visible(fn (TraceabilitySettings $settings) => $settings->enable_lots_serial_numbers),
+                    ->visible(function (Get $get, TraceabilitySettings $settings): bool {
+                        $productId = $get('product_id');
+
+                        return $settings->enable_lots_serial_numbers
+                            && filled($productId)
+                            && Product::find($productId)?->tracking !== ProductTracking::QTY;
+                    }),
                 Select::make('package_id')
                     ->label(__('inventories::filament/clusters/products/resources/product/pages/manage-quantities.form.fields.package'))
                     ->relationship(

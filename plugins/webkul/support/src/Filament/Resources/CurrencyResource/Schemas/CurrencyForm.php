@@ -100,12 +100,12 @@ class CurrencyForm
                                     ->resizable(),
                                 TableColumn::make('rate')
                                     ->label(__('support::filament/resources/currency.form.sections.rates.fields.unit-per-currency', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ]))
                                     ->resizable(),
                                 TableColumn::make('rate_temp')
                                     ->label(__('support::filament/resources/currency.form.sections.rates.fields.currency-per-unit', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ]))
                                     ->resizable(),
                             ])
@@ -119,7 +119,7 @@ class CurrencyForm
                                     ->displayFormat('Y-m-d'),
                                 TextInput::make('rate')
                                     ->label(__('support::filament/resources/currency.form.sections.rates.fields.unit-per-currency', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ]))
                                     ->required()
                                     ->numeric()
@@ -139,7 +139,7 @@ class CurrencyForm
                                     }),
                                 TextInput::make('rate_temp')
                                     ->label(__('support::filament/resources/currency.form.sections.rates.fields.currency-per-unit', [
-                                        'currency' => config('app.currency'),
+                                        'currency' => default_currency_code(),
                                     ]))
                                     ->readOnly()
                                     ->dehydrated(false)

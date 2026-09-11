@@ -174,7 +174,7 @@ class QuantitiesTable
 
                         return $data;
                     })
-                    ->before(function (array $data) {
+                    ->before(function (CreateAction $action, array $data) {
                         $existingQuantity = ProductQuantity::where('location_id', $data['location_id'] ?? Warehouse::query()->when(Product::find($data['product_id'])?->company_id, fn ($query, $scopedCompanyId) => $query->where(owned_by_company($scopedCompanyId)))->value('lot_stock_location_id'))
                             ->where('product_id', $data['product_id'])
                             ->where('package_id', $data['package_id'] ?? null)
@@ -188,7 +188,7 @@ class QuantitiesTable
                                 ->warning()
                                 ->send();
 
-                            $this->halt();
+                            $action->halt();
                         }
                     })
                     ->successNotification(
@@ -206,6 +206,9 @@ class QuantitiesTable
                             ->title(__('inventories::filament/clusters/products/resources/product/pages/manage-quantities.table.actions.delete.notification.title'))
                             ->body(__('inventories::filament/clusters/products/resources/product/pages/manage-quantities.table.actions.delete.notification.body')),
                     ),
-            ]);
+            ])
+            ->modifyQueryUsing(function (Builder $query) {
+                $query->whereHas('product', fn (Builder $query) => $query->whereNull('deleted_at'));
+            });
     }
 }

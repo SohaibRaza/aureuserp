@@ -456,8 +456,9 @@ class QuotationForm
                     ->relationship(
                         name: 'product',
                         titleAttribute: 'name',
-                        modifyQueryUsing: fn (Builder $query, Get $get) => $query
+                        modifyQueryUsing: fn (Builder $query, Get $get, ?string $state) => $query
                             ->withTrashed()
+                            ->where(hide_deleted_unless_selected($state))
                             ->whereNull('is_configurable')
                             ->where(owned_by_company($get('../../company_id'))),
                     )
@@ -800,9 +801,10 @@ class QuotationForm
                     ->relationship(
                         'product',
                         'name',
-                        fn (Builder $query, Get $get) => $query
+                        fn (Builder $query, Get $get, ?string $state) => $query
                             ->withTrashed()
-                            ->where('is_configurable', null)
+                            ->where(hide_deleted_unless_selected($state))
+                            ->whereNull('is_configurable')
                             ->where(owned_by_company($get('../../company_id'))),
                     )
                     ->searchable()
@@ -842,7 +844,12 @@ class QuotationForm
                         $product = Product::withTrashed()->find($get('product_id'));
 
                         $set('name', $product->name);
-                        $set('price_unit', $product->price);
+                        $set('price_unit', round(static::convertPrice(
+                            $product->price,
+                            default_currency_id(),
+                            $get('../../currency_id'),
+                            $get('../../company_id') ?? current_company_id(),
+                        ), 2));
                         $set('product_uom_id', $product->uom_id);
                     })
                     ->required(),
@@ -1048,7 +1055,12 @@ class QuotationForm
 
         $set('product_packaging_qty', $packaging['packaging_qty'] ?? null);
 
-        $set('purchase_price', $product->cost ?? 0);
+        $set('purchase_price', round(static::convertPrice(
+            $product->cost ?? 0,
+            default_currency_id(),
+            $get('../../currency_id'),
+            $get('../../company_id') ?? current_company_id(),
+        ), 2));
 
         self::calculateLineTotals($set, $get);
     }
@@ -1096,7 +1108,12 @@ class QuotationForm
 
         $set('price_unit', round($priceUnit, 2));
 
-        $purchasePrice = static::calculatePurchasePrice($product, $get('product_uom_id'));
+        $purchasePrice = static::calculatePurchasePrice(
+            $product,
+            $get('product_uom_id'),
+            $get('../../currency_id'),
+            $get('../../company_id') ?? current_company_id(),
+        );
 
         $set('purchase_price', round($purchasePrice, 2));
 
@@ -1151,6 +1168,68 @@ class QuotationForm
         self::calculateLineTotals($set, $get);
     }
 
+    private static function convertPrice($amount, ?int $fromCurrencyId, ?int $toCurrencyId, ?int $companyId): float
+    {
+        if (! $amount || ! $fromCurrencyId || ! $toCurrencyId || $fromCurrencyId === $toCurrencyId) {
+            return (float) $amount;
+        }
+
+        $fromCurrency = Currency::find($fromCurrencyId);
+
+        $toCurrency = Currency::find($toCurrencyId);
+
+        if (! $fromCurrency || ! $toCurrency) {
+            return (float) $amount;
+        }
+
+        return $fromCurrency->convert($amount, $toCurrency, Company::find($companyId), round: false);
+    }
+
+    private static function updateProductPricesForCurrency(?int $fromCurrencyId, Set $set, Get $get): void
+    {
+        $toCurrencyId = $get('currency_id');
+
+        if (! $fromCurrencyId || ! $toCurrencyId || $fromCurrencyId === $toCurrencyId) {
+            return;
+        }
+
+        $companyId = $get('company_id') ?? current_company_id();
+
+        $products = $get('products');
+
+        if (is_array($products)) {
+            foreach ($products as $key => $product) {
+                if (! isset($product['product_id'])) {
+                    continue;
+                }
+
+                $priceUnit = static::convertPrice($product['price_unit'] ?? 0, $fromCurrencyId, $toCurrencyId, $companyId);
+
+                $set("products.$key.price_unit", round($priceUnit, 2));
+
+                $purchasePrice = static::convertPrice($product['purchase_price'] ?? 0, $fromCurrencyId, $toCurrencyId, $companyId);
+
+                $set("products.$key.purchase_price", round($purchasePrice, 2));
+
+                self::calculateLineTotals($set, $get, "products.$key.");
+            }
+        }
+
+        $optionalProducts = $get('optionalProducts');
+
+        if (is_array($optionalProducts)) {
+            foreach ($optionalProducts as $key => $optionalProduct) {
+                if (! isset($optionalProduct['product_id'])) {
+                    continue;
+                }
+
+                $priceUnit = static::convertPrice($optionalProduct['price_unit'] ?? 0, $fromCurrencyId, $toCurrencyId, $companyId);
+
+                $set("optionalProducts.$key.price_unit", round($priceUnit, 2));
+            }
+        }
+    }
+
     private static function calculateUnitQuantity($fromUomId, $quantity, $toUomId = null): float
     {
         if (! $fromUomId || ! filled($quantity)) {
@@ -1182,12 +1261,18 @@ class QuotationForm
             $vendorPrices = $vendorPrices->where('partner_id', $get('../../partner_id'));
         }
 
-        $vendorPrices = $vendorPrices->where('min_qty', '<=', $get('product_qty') ?? 1)->where('currency_id', $get('../../currency_id'));
+        $vendorPrices = $vendorPrices->where('min_qty', '<=', $get('product_qty') ?? 1);
+
+        $currencyId = $get('../../currency_id');
+
+        $companyId = $get('../../company_id') ?? current_company_id();
 
         if (! $vendorPrices->isEmpty()) {
-            $vendorPrice = $vendorPrices->first()->price;
+            $seller = $vendorPrices->first();
+
+            $vendorPrice = static::convertPrice($seller->price, $seller->currency_id, $currencyId, $companyId);
         } else {
-            $vendorPrice = $product->price ?? $product->cost;
+            $vendorPrice = static::convertPrice($product->price ?? $product->cost, default_currency_id(), $currencyId, $companyId);
         }
 
         if (! $get('product_uom_id') || ! $product->uom) {
@@ -1199,9 +1284,9 @@ class QuotationForm
         return (float) ($vendorPrice * $uomQty);
     }
 
-    private static function calculatePurchasePrice($product, $uomId): float
+    private static function calculatePurchasePrice($product, $uomId, ?int $currencyId = null, ?int $companyId = null): float
     {
-        $cost = (float) ($product->cost ?? 0);
+        $cost = static::convertPrice($product->cost ?? 0, default_currency_id(), $currencyId, $companyId);
 
         if (! $uomId || ! $product->uom) {
             return $cost;
