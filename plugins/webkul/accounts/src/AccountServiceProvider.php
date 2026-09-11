@@ -126,6 +126,23 @@ class AccountServiceProvider extends PackageServiceProvider
                 '2026_07_30_120000_create_products_category_company_accounts_table',
                 '2026_07_30_120001_create_partners_partner_company_properties_table',
                 '2026_08_03_130000_seed_accounts_sequences',
+                '2026_09_07_000002_add_recon_match_id_to_partial_reconciles',
+                '2026_09_07_000004_harden_reconciliation_schema',
+                '2026_09_07_000005_add_bank_statement_line_source_fields',
+                '2026_09_07_000006_create_reconciling_items_table',
+                '2026_09_07_000007_create_reconciliation_snapshots_table',
+                '2026_09_07_193726_add_active_content_hash_unique_index_to_recon_import_batches',
+                '2026_09_08_090414_allow_multiple_stale_reconciliations_per_bank',
+                '2026_09_08_130000_add_terminal_treatment_to_bank_statement_lines',
+                '2026_09_08_140000_create_reconciliation_rules_table',
+                '2026_09_08_150000_create_reconciliation_rollouts_table',
+                '2026_09_10_000001_add_accounting_provenance_to_recon_matches',
+                '2026_09_10_000002_add_idempotency_fingerprint_to_recon_matches',
+                '2026_09_10_000003_require_reconciliation_reversal_reason',
+                '2026_09_10_000004_add_quarantined_reconciliation_import_status',
+                '2026_09_10_000005_include_quarantined_reconciliation_import_hashes',
+                '2026_09_10_000006_protect_reconciliation_audit_events',
+                '2026_09_11_000001_seed_reconciliation_accounts',
             ])
             ->runsMigrations()
             ->hasSettings([

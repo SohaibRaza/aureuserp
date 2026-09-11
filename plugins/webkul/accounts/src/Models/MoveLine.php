@@ -2,6 +2,7 @@
 
 namespace Webkul\Account\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -650,6 +651,77 @@ class MoveLine extends Model implements Sortable
     protected static function newFactory(): Factory
     {
         return MoveLineFactory::new();
+    }
+
+    /**
+     * U13: Shared accounting-owned definition of an open liquidity candidate.
+     *
+     * Both the bank-reconciliation workspace (via MatchingEngine) and any
+     * accounting reconciliation screen must start from this scope so a fully
+     * bank-linked line disappears from both. Recon allocations narrow this
+     * further in MatchingEngine; this scope covers only accounting-owned
+     * state (posted, scope, unreconciled, unlinked).
+     */
+    public function scopeOpenLiquidityForBankRecon(Builder $query, int $companyId, int $accountId, int $currencyId, string $cutoff): Builder
+    {
+        return $query
+            ->withoutGlobalScopes()
+            ->from('accounts_account_move_lines as line')
+            ->join('accounts_account_moves as move', 'move.id', '=', 'line.move_id')
+            ->where('move.state', 'posted')
+            ->where('move.company_id', $companyId)
+            ->where('line.company_id', $companyId)
+            ->where('line.account_id', $accountId)
+            ->where('line.currency_id', $currencyId)
+            ->whereDate('move.date', '<=', $cutoff)
+            ->whereDate('line.date', '<=', $cutoff)
+            ->where('line.reconciled', false)
+            ->whereNull('line.statement_line_id');
+    }
+
+    /** Canonical accountant-facing view of liquidity still available for bank clearing. */
+    public function scopeOpenForBankReconciliation(Builder $query): Builder
+    {
+        $table = $this->getTable();
+        $allocated = DB::table('recon_match_lines as allocation')
+            ->join('recon_matches as match', 'match.id', '=', 'allocation.match_id')
+            ->whereColumn('allocation.lineable_id', $table.'.id')
+            ->where('allocation.lineable_type', 'move_line')
+            ->whereIn('match.status', ['proposed', 'confirmed'])
+            ->whereNull('allocation.reversed_at')
+            ->whereNull('match.reversed_at')
+            ->selectRaw('COALESCE(SUM(ABS(allocation.amount_applied)), 0)');
+
+        return $query
+            ->where($table.'.parent_state', MoveState::POSTED)
+            ->where($table.'.reconciled', false)
+            ->whereNull($table.'.statement_line_id')
+            ->whereExists(function ($journals) use ($table): void {
+                $journals->selectRaw('1')
+                    ->from('accounts_journals as bank_journal')
+                    ->whereColumn('bank_journal.company_id', $table.'.company_id')
+                    ->whereColumn('bank_journal.default_account_id', $table.'.account_id')
+                    ->whereIn('bank_journal.type', [JournalType::BANK->value, JournalType::CASH->value, JournalType::CREDIT_CARD->value]);
+            })
+            ->whereNotExists(function ($adjustments) use ($table): void {
+                $adjustments->selectRaw('1')
+                    ->from('recon_adjustments as bank_adjustment')
+                    ->whereColumn('bank_adjustment.move_id', $table.'.move_id')
+                    ->whereNull('bank_adjustment.reversed_at');
+            })
+            ->whereRaw(
+                'ABS(CASE WHEN '.$table.'.currency_id <> '.$table.'.company_currency_id THEN COALESCE('.$table.'.amount_residual_currency, '.$table.'.amount_currency, '.$table.'.amount_residual, '.$table.'.balance) ELSE COALESCE('.$table.'.amount_residual, '.$table.'.balance) END) - ('.$allocated->toSql().') >= POWER(10, -COALESCE((SELECT candidate_currency.decimal_places FROM currencies AS candidate_currency WHERE candidate_currency.id = '.$table.'.currency_id), 2))',
+                $allocated->getBindings(),
+            );
+    }
+
+    /**
+     * U13: Recon matching-number prefix owned by bank reconciliation linkage.
+     * Accounting partials use P<id>/full IDs; bank linkage uses RB<match_id>.
+     */
+    public static function bankMatchNumber(int $matchId): string
+    {
+        return 'RB'.$matchId;
     }
 
     public function companyConsistentFields(): array

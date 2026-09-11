@@ -4,6 +4,7 @@ namespace Webkul\Account\Services;
 
 use Exception;
 use Illuminate\Support\Collection;
+use InvalidArgumentException;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Models\Account;
@@ -82,6 +83,64 @@ class Reconciler
         $calculator->recompute($creditMove->refresh())->save();
 
         $this->refreshMatchingNumbers($affectedLineIds);
+    }
+
+    /**
+     * U13: Accounting-owned bank linkage for fully consumed 1:1 matches.
+     *
+     * Sets statement linkage and a recon matching-number stamp without touching
+     * residuals, partials, or payment state. Only the accounting service may
+     * write these MoveLine fields; MatchService must delegate here.
+     */
+    public function linkBankStatementLines(Collection $ledgerLines, int $statementLineId, int $statementId, string $matchNumber): void
+    {
+        foreach ($ledgerLines as $line) {
+            $fresh = MoveLine::query()->withoutGlobalScopes()->lockForUpdate()->findOrFail($line->id);
+
+            if ($fresh->reconciled) {
+                throw new InvalidArgumentException("Ledger line {$fresh->id} is already reconciled in accounting.");
+            }
+
+            if ($fresh->statement_line_id !== null || $fresh->statement_id !== null || $fresh->matching_number !== null) {
+                throw new InvalidArgumentException("Ledger line {$fresh->id} already has accounting statement linkage or matching provenance.");
+            }
+
+            $fresh->statement_line_id = $statementLineId;
+            $fresh->statement_id = $statementId;
+            $fresh->matching_number = $matchNumber;
+            $fresh->save();
+        }
+    }
+
+    /**
+     * U13: Restore pre-match statement linkage exactly.
+     *
+     * Only clears linkage stamped by the given match number; any other value
+     * indicates external modification and throws a safe conflict.
+     *
+     * @param  array<int, array{statement_line_id: mixed, statement_id: mixed, matching_number: mixed}>  $previous
+     */
+    public function unlinkBankStatementLines(Collection $ledgerLines, array $previous, string $expectedMatchNumber): void
+    {
+        foreach ($ledgerLines as $line) {
+            $fresh = MoveLine::query()->withoutGlobalScopes()->lockForUpdate()->findOrFail($line->id);
+            $snapshot = $previous[$fresh->id] ?? null;
+
+            if (! is_array($snapshot)) {
+                throw new InvalidArgumentException("No provenance snapshot for ledger line {$fresh->id}; cannot safely unmatch.");
+            }
+
+            if ($fresh->matching_number !== $expectedMatchNumber) {
+                throw new InvalidArgumentException(
+                    "Ledger line {$fresh->id} was modified outside this match; use a controlled correction workflow."
+                );
+            }
+
+            $fresh->statement_line_id = $snapshot['statement_line_id'];
+            $fresh->statement_id = $snapshot['statement_id'];
+            $fresh->matching_number = $snapshot['matching_number'];
+            $fresh->save();
+        }
     }
 
     public function reconcileGroups(array $plans): array

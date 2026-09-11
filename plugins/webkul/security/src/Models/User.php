@@ -139,6 +139,10 @@ class User extends BaseUser implements FilamentUser, HasAppAuthentication, HasAp
             } else {
                 $user->handlePartnerUpdation($user);
             }
+
+            if ($user->default_company_id) {
+                $user->allowedCompanies()->syncWithoutDetaching([$user->default_company_id]);
+            }
         });
     }
 

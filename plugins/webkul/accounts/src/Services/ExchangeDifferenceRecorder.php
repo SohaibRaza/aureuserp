@@ -111,17 +111,13 @@ class ExchangeDifferenceRecorder
                 continue;
             }
 
-            $move = AccountMove::create($moveValues);
-
-            $move->state = 'posted';
-
-            $move->save();
+            $move = AccountMove::create([...$moveValues, 'state' => 'draft']);
 
             foreach ($moveValues['lines'] as $lineValues) {
                 MoveLine::create($lineValues + ['move_id' => $move->id]);
             }
 
-            $move = app(MoveCalculator::class)->recompute($move);
+            $move = app(MoveWorkflow::class)->post($move->fresh('lines'));
 
             foreach ($difference['to_reconcile'] as $pairing) {
                 $exchangeLine = $move->lines[$pairing['sequence']];

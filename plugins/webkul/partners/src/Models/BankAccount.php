@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Auth;
 use Webkul\Partner\Database\Factories\BankAccountFactory;
 use Webkul\Security\Models\User;
 use Webkul\Support\Models\Bank;
+use Webkul\Support\Models\Company;
+use Webkul\Support\Models\Currency;
 
 class BankAccount extends Model
 {
@@ -24,7 +26,11 @@ class BankAccount extends Model
         'can_send_money',
         'creator_id',
         'partner_id',
+        'company_id',
+        'currency_id',
         'bank_id',
+        'source_type',
+        'source_identifier',
     ];
 
     protected $casts = [
@@ -42,23 +48,33 @@ class BankAccount extends Model
         return $this->belongsTo(Partner::class);
     }
 
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
+    }
+
+    public function currency(): BelongsTo
+    {
+        return $this->belongsTo(Currency::class);
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'creator_id');
     }
 
-    protected static function boot()
+    protected static function boot(): void
     {
         parent::boot();
 
-        static::creating(function ($bankAccount) {
+        static::creating(function (BankAccount $bankAccount): void {
             $bankAccount->creator_id ??= Auth::id();
-
-            $bankAccount->account_holder_name = $bankAccount->partner->name;
         });
 
-        static::updating(function ($bankAccount) {
-            $bankAccount->account_holder_name = $bankAccount->partner->name;
+        static::saving(function (BankAccount $bankAccount): void {
+            $bankAccount->account_holder_name = $bankAccount->company?->name
+                ?? $bankAccount->partner?->name
+                ?? throw new \LogicException('A bank account must belong to a company or partner.');
         });
     }
 

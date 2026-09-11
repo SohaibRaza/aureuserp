@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Spatie\EloquentSortable\Sortable;
 use Spatie\EloquentSortable\SortableTrait;
 use Webkul\Account\Database\Factories\JournalFactory;
@@ -70,6 +71,34 @@ class Journal extends Model implements Sortable
     public function bankAccount()
     {
         return $this->belongsTo(BankAccount::class)->withTrashed();
+    }
+
+    public function reconciliationConfigurationErrors(): array
+    {
+        $errors = [];
+
+        if (! $this->default_account_id) {
+            $errors[] = 'a default ledger account';
+        }
+
+        $bankAccount = $this->bankAccount;
+
+        if (! $bankAccount) {
+            $errors[] = 'a company bank account';
+        } elseif ($bankAccount->trashed() || ! $bankAccount->is_active) {
+            $errors[] = 'an active company bank account';
+        } elseif ((int) $bankAccount->company_id !== (int) $this->company_id) {
+            $errors[] = 'a bank account owned by this company';
+        } elseif ($bankAccount->currency_id && (int) $bankAccount->currency_id !== (int) ($this->currency_id ?: $this->company?->currency_id)) {
+            $errors[] = 'a bank account in the journal currency';
+        }
+
+        return $errors;
+    }
+
+    public function isReadyForReconciliation(): bool
+    {
+        return $this->reconciliationConfigurationErrors() === [];
     }
 
     public function company()
@@ -263,6 +292,23 @@ class Journal extends Model implements Sortable
 
         static::saving(function ($journal) {
             $journal->computeSuspenseAccountId();
+
+            if (! Schema::hasColumn('partners_bank_accounts', 'company_id') || ! $journal->bank_account_id) {
+                return;
+            }
+
+            $bankAccount = BankAccount::query()->find($journal->bank_account_id);
+            $currencyId = $journal->currency_id ?: Company::query()->find($journal->company_id)?->currency_id;
+
+            if (! $bankAccount
+                || ! $bankAccount->is_active
+                || (int) $bankAccount->company_id !== (int) $journal->company_id
+                || (int) $bankAccount->currency_id !== (int) $currencyId
+            ) {
+                throw ValidationException::withMessages([
+                    'bank_account_id' => 'Select an active bank account owned by this company and using the journal currency.',
+                ]);
+            }
         });
 
         static::saved(function ($journal) {

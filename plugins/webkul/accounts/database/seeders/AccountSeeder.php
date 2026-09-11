@@ -745,6 +745,20 @@ class AccountSeeder extends Seeder
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ],
+            [
+                'id'           => 52,
+                'currency_id'  => $currency?->id,
+                'creator_id'   => $user?->id,
+                'account_type' => 'income',
+                'name'         => 'Interest Income',
+                'code'         => '451000',
+                'note'         => 'Interest earned on bank and cash balances.',
+                'deprecated'   => false,
+                'reconcile'    => false,
+                'non_trade'    => false,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
         ];
 
         DB::table('accounts_accounts')->insert($accounts);

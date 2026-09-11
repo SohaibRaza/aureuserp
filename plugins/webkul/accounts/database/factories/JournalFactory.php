@@ -61,9 +61,20 @@ class JournalFactory extends Factory
 
     public function bank(): static
     {
-        return $this->state(fn (array $attributes) => [
-            'type'            => JournalType::BANK,
-            'bank_account_id' => BankAccount::factory(),
-        ]);
+        return $this
+            ->state(fn (array $attributes) => [
+                'type'            => JournalType::BANK,
+                'bank_account_id' => null,
+            ])
+            ->afterCreating(function (Journal $journal): void {
+                $bankAccount = BankAccount::factory()->create([
+                    'partner_id'  => null,
+                    'company_id'  => $journal->company_id,
+                    'currency_id' => $journal->currency_id ?: $journal->company?->currency_id,
+                    'source_type' => 'manual',
+                ]);
+
+                $journal->update(['bank_account_id' => $bankAccount->id]);
+            });
     }
 }

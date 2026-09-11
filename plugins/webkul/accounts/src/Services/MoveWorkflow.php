@@ -28,6 +28,8 @@ class MoveWorkflow
 {
     public function cancel(AccountMove $move): AccountMove
     {
+        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+
         $move->state = MoveState::CANCEL;
 
         $move->save();
@@ -45,6 +47,8 @@ class MoveWorkflow
 
     public function post(AccountMove $move): AccountMove
     {
+        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+
         $this->assertPostable($move);
 
         $move->state = MoveState::POSTED;
@@ -83,6 +87,8 @@ class MoveWorkflow
 
     public function resetToDraft(AccountMove $move): AccountMove
     {
+        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+
         if (! in_array($move->state, [MoveState::CANCEL, MoveState::POSTED])) {
             throw new Exception('Only posted/cancelled journal entries can be reset to draft.');
         }
@@ -118,6 +124,11 @@ class MoveWorkflow
 
     public function reverse(Collection $moves, array $defaultValuesPerMove = [], bool $cancel = false): Collection
     {
+        $moves->values()->each(fn (AccountMove $move, int $index) => app(AccountingDateGuard::class)->assertReconciliationPeriodOpen(
+            $move,
+            $defaultValuesPerMove[$index]['date'] ?? $move->date,
+        ));
+
         if ($cancel) {
             $moves->flatMap(fn (AccountMove $move) => $move->lines)->each(function (MoveLine $line) {
                 $line->matchedDebits->each(fn ($partial) => $partial->delete());

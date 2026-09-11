@@ -35,6 +35,9 @@ class ListJournalItems extends ListRecords
             'unreconciled' => PresetView::make(__('accounting::filament/clusters/accounting/resources/journal-item.table.saved-filters.unreconciled'))
                 ->icon('heroicon-s-arrows-right-left')
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('reconciled', false)),
+            'open_bank_reconciliation' => PresetView::make(__('accounting::filament/clusters/accounting/resources/journal-item.table.saved-filters.open-bank-reconciliation'))
+                ->icon('heroicon-s-building-library')
+                ->modifyQueryUsing(fn (Builder $query) => $query->openForBankReconciliation()),
             'with_residual' => PresetView::make(__('accounting::filament/clusters/accounting/resources/journal-item.table.saved-filters.with-residual'))
                 ->icon('heroicon-s-banknotes')
                 ->modifyQueryUsing(fn (Builder $query) => $query->where('amount_residual', '!=', 0)),

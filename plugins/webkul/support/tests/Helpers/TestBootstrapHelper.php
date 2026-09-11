@@ -73,6 +73,8 @@ class TestBootstrapHelper
             }
         });
 
+        static::syncIdentitySequences();
+
         static::bootInstalledPluginProviders();
 
         static::restartTestTransaction();
@@ -219,6 +221,15 @@ class TestBootstrapHelper
 
         static::ensureWorkerDatabase();
 
+        if (static::shouldReusePreparedDatabase()) {
+            static::assertPreparedDatabase();
+            static::syncIdentitySequences();
+            static::$isERPInstalled = true;
+            static::bootInstalledPluginProviders();
+
+            return;
+        }
+
         static::dropStalePluginMigrationPaths();
 
         Artisan::call('migrate:fresh', ['--force' => true]);
@@ -230,9 +241,89 @@ class TestBootstrapHelper
             '--admin-password' => 'admin123',
         ]);
 
+        static::syncIdentitySequences();
+
         static::$isERPInstalled = true;
 
         static::bootInstalledPluginProviders();
+    }
+
+    /**
+     * Reuse is deliberately opt-in. It prevents focused local tests from rebuilding
+     * the entire ERP, while CI and clean-room runs retain the fresh-install path.
+     */
+    private static function shouldReusePreparedDatabase(): bool
+    {
+        if (filled(config('testing.parallel_token'))) {
+            return false;
+        }
+
+        return filter_var(config('testing.reuse_database', false), FILTER_VALIDATE_BOOL);
+    }
+
+    private static function assertPreparedDatabase(): void
+    {
+        $requiredTables = [
+            'migrations',
+            'plugins',
+            'companies',
+            'users',
+            'accounts_account_moves',
+            'recon_bank_reconciliations',
+            'recon_events',
+            'recon_reconciliation_snapshots',
+        ];
+
+        $missing = array_values(array_filter($requiredTables, fn (string $table): bool => ! Schema::hasTable($table)));
+        $accountsInstalled = Schema::hasTable('plugins')
+            && DB::table('plugins')->where('name', 'accounts')->where('is_installed', true)->exists();
+
+        if ($missing === [] && $accountsInstalled) {
+            return;
+        }
+
+        $database = config('database.connections.'.config('database.default').'.database');
+        $missingLabel = $missing === [] ? 'the Accounts plugin installation' : implode(', ', $missing);
+
+        throw new RuntimeException(
+            "Prepared test database [{$database}] is unavailable ({$missingLabel}). "
+            .'Run the explicitly approved test-database preparation steps, then retry with AUREUSERP_TEST_REUSE_DATABASE=1.'
+        );
+    }
+
+    /**
+     * Seeders insert rows with explicit IDs, leaving Postgres identity
+     * sequences behind. Sync every sequence past its table's current max so
+     * factory-created rows cannot collide with seeded ones.
+     */
+    private static function syncIdentitySequences(): void
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        $tables = DB::select(<<<'SQL'
+            SELECT columns.table_name, pg_get_serial_sequence(quote_ident(columns.table_name), columns.column_name) AS sequence
+            FROM information_schema.columns AS columns
+            JOIN information_schema.tables AS tables
+                ON tables.table_schema = columns.table_schema
+                AND tables.table_name = columns.table_name
+                AND tables.table_type = 'BASE TABLE'
+            WHERE columns.table_schema = 'public'
+                AND columns.column_name = 'id'
+        SQL);
+
+        foreach ($tables as $table) {
+            if (blank($table->sequence)) {
+                continue;
+            }
+
+            DB::statement(sprintf(
+                "SELECT setval('%s', GREATEST((SELECT COALESCE(MAX(id), 1) FROM %s), 1), true)",
+                $table->sequence,
+                $table->table_name,
+            ));
+        }
     }
 
     private static function dropStalePluginMigrationPaths(): void
@@ -281,9 +372,14 @@ class TestBootstrapHelper
 
     private static function ensureWorkerDatabase(): void
     {
-        $token = env('TEST_TOKEN');
+        $token = config('testing.parallel_token');
 
         if (blank($token)) {
+            $database = (string) config('database.connections.'.config('database.default').'.database');
+            if (app()->environment('local') && ! str_ends_with($database, '_testing')) {
+                throw new RuntimeException('Refusing to run test bootstrap against the local application database. Set TEST_TOKEN or use a *_testing database.');
+            }
+
             return;
         }
 

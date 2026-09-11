@@ -62,8 +62,15 @@ class SupportPlugin implements Plugin
                         const activeSidebarItem = document.querySelector('nav .fi-sidebar-item-active');
 
                         const sidebarWrapper = document.querySelector('nav.fi-sidebar-nav');
-    
-                        sidebarWrapper.scrollTo(0, activeSidebarItem.offsetTop - 250);
+
+                        // Livewire navigation can render before the sidebar (or its
+                        // active item) is present. Treat that transient state as a
+                        // no-op instead of dereferencing null and breaking the page.
+                        if (! sidebarWrapper || ! activeSidebarItem) {
+                            return;
+                        }
+
+                        sidebarWrapper.scrollTo(0, Math.max(0, activeSidebarItem.offsetTop - 250));
                     }, 0);
                 });
             </script>

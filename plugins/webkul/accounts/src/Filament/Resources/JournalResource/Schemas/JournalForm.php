@@ -2,10 +2,12 @@
 
 namespace Webkul\Account\Filament\Resources\JournalResource\Schemas;
 
+use Filament\Actions\Action;
 use Filament\Forms\Components\ColorPicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Fieldset;
 use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
@@ -21,9 +23,9 @@ use Webkul\Account\Enums\CommunicationType;
 use Webkul\Account\Enums\JournalType;
 use Webkul\Account\Enums\PaymentType;
 use Webkul\Account\Models\Journal;
+use Webkul\Accounting\Filament\Clusters\Configuration\Resources\CompanyBankAccountResource;
 use Webkul\Support\Filament\Forms\Components\Repeater;
 use Webkul\Support\Filament\Forms\Components\Repeater\TableColumn;
-use Webkul\Support\Models\Company;
 
 class JournalForm
 {
@@ -149,27 +151,38 @@ class JournalForm
                                                     })
                                                     ->schema([
                                                         Group::make()
+                                                            ->extraAttributes(['class' => 'flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between'])
                                                             ->schema([
                                                                 Select::make('bank_account_id')
+                                                                    ->extraAttributes(['class' => 'w-full lg:flex-1'])
                                                                     ->searchable()
                                                                     ->preload()
+                                                                    ->required(fn (Get $get): bool => $get('type') === JournalType::BANK)
                                                                     ->relationship(
                                                                         name: 'bankAccount',
                                                                         titleAttribute: 'account_number',
-                                                                        modifyQueryUsing: function ($query, Get $get) {
-                                                                            $company = Company::find(
-                                                                                $get('company_id') ?? current_company_id()
-                                                                            );
-
-                                                                            if ($company?->partner_id) {
-                                                                                $query->where('partner_id', $company->partner_id);
-                                                                            }
-                                                                        }
+                                                                        modifyQueryUsing: fn (Builder $query, Get $get) => $query
+                                                                            ->where('company_id', $get('company_id') ?? current_company_id())
+                                                                            ->where('is_active', true)
+                                                                            ->whereNull('deleted_at')
+                                                                            ->when(
+                                                                                $get('currency_id') ?? current_company()?->currency_id,
+                                                                                fn (Builder $query, int $currencyId) => $query->where('currency_id', $currencyId),
+                                                                            )
                                                                     )
                                                                     ->getOptionLabelFromRecordUsing(function ($record): string {
-                                                                        return $record->account_number.($record->trashed() ? ' (Deleted)' : '');
+                                                                        return $record->account_number.' — '.$record->bank?->name;
                                                                     })
+                                                                    ->helperText('Select a bank account owned by the active company.')
                                                                     ->hiddenLabel(),
+                                                                Actions::make([
+                                                                    Action::make('createCompanyBankAccount')
+                                                                        ->label('Manage Bank Accounts')
+                                                                        ->icon('heroicon-o-building-library')
+                                                                        ->color('gray')
+                                                                        ->url(fn (): string => CompanyBankAccountResource::getUrl())
+                                                                        ->openUrlInNewTab(),
+                                                                ])->extraAttributes(['class' => 'shrink-0'])->verticalAlignment('center'),
                                                             ]),
                                                     ]),
                                             ]),

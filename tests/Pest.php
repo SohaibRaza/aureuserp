@@ -3,6 +3,8 @@
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
+require_once __DIR__.'/../plugins/webkul/support/tests/Helpers/TestBootstrapHelper.php';
+
 /*
 |--------------------------------------------------------------------------
 | Test Case

@@ -17,6 +17,7 @@
  * (syncPermissions), users are firstOrCreate'd.
  */
 
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -28,7 +29,7 @@ require __DIR__.'/../vendor/autoload.php';
 
 $app = require __DIR__.'/../bootstrap/app.php';
 
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+$app->make(Kernel::class)->bootstrap();
 
 // ---------------------------------------------------------------------------
 // 1. Branding — deep teal
@@ -36,9 +37,9 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 $brand = settings(BrandSettings::class);
 
 $brand->primary_color = '#0F766E';   // deep teal
-$brand->gray_color    = '#52525B';   // zinc-ish neutral
-$brand->danger_color  = '#DC2626';
-$brand->info_color    = '#0284C7';
+$brand->gray_color = '#52525B';   // zinc-ish neutral
+$brand->danger_color = '#DC2626';
+$brand->info_color = '#0284C7';
 $brand->success_color = '#16A34A';
 $brand->warning_color = '#D97706';
 $brand->save();
@@ -60,27 +61,27 @@ echo "✔ Branding applied (primary {$brand->primary_color}) — edit in Setting
 $roleSpecs = [
     'Salesperson' => [
         [['view_any', 'view', 'create', 'update', 'page', 'widget'],
-         ['sale', 'contact', 'partner', 'product']],
+            ['sale', 'contact', 'partner', 'product']],
         [['view_any', 'view', 'page', 'widget'],
-         ['invoice', 'accounting_aged', 'accounting_balance', 'accounting_profit', 'accounting_trial', 'accounting_general']],
+            ['invoice', 'accounting_aged', 'accounting_balance', 'accounting_profit', 'accounting_trial', 'accounting_general']],
     ],
     'Warehouse' => [
         [['view_any', 'view', 'create', 'update', 'page', 'widget'],
-         ['inventory', 'product', 'barcode_launch']],
+            ['inventory', 'product', 'barcode_launch']],
         [['view_any', 'view', 'page', 'widget'],
-         ['sale', 'purchase', 'manufacturing']],
+            ['sale', 'purchase', 'manufacturing']],
     ],
     'Accountant' => [
         [['view_any', 'view', 'create', 'update', 'page', 'widget'],
-         ['account', 'accounting', 'invoice']],
+            ['account', 'accounting', 'invoice']],
         [['view_any', 'view', 'page', 'widget'],
-         ['sale', 'purchase', 'product', 'contact', 'partner']],
+            ['sale', 'purchase', 'product', 'contact', 'partner']],
     ],
     'HR Manager' => [
         [['view_any', 'view', 'create', 'update', 'page', 'widget'],
-         ['employee', 'recruitment', 'time_off', 'timesheet']],
+            ['employee', 'recruitment', 'time_off', 'timesheet']],
         [['view_any', 'view', 'page', 'widget'],
-         ['project']],
+            ['project']],
     ],
 ];
 
@@ -143,6 +144,10 @@ foreach ($demoUsers as [$name, $email, $roleName]) {
             'default_company_id'  => $companyId,
         ]
     );
+
+    if ($companyId) {
+        $user->allowedCompanies()->syncWithoutDetaching([$companyId]);
+    }
 
     $user->assignRole($roleName);
 

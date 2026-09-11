@@ -37,7 +37,18 @@ class JournalRequest extends FormRequest
             'suspense_account_id'       => ['nullable', 'integer', 'exists:accounts_accounts,id'],
             'profit_account_id'         => ['nullable', 'integer', 'exists:accounts_accounts,id'],
             'loss_account_id'           => ['nullable', 'integer', 'exists:accounts_accounts,id'],
-            'bank_account_id'           => ['nullable', 'integer', 'exists:partners_bank_accounts,id'],
+            'bank_account_id'           => [
+                Rule::requiredIf(fn (): bool => $this->input('type') === JournalType::BANK->value),
+                'nullable',
+                'integer',
+                Rule::exists('partners_bank_accounts', 'id')->where(function ($query) {
+                    return $query
+                        ->where('company_id', $this->input('company_id'))
+                        ->where('currency_id', $this->input('currency_id'))
+                        ->where('is_active', true)
+                        ->whereNull('deleted_at');
+                }),
+            ],
             'color'                     => ['nullable', 'string', 'max:7'],
             'show_on_dashboard'         => ['nullable', 'boolean'],
             'refund_order'              => ['nullable', 'boolean'],

@@ -2,6 +2,7 @@
 
 namespace Webkul\Account\Models;
 
+use App\Models\Recon\ReconMatch;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -30,6 +31,7 @@ class PartialReconcile extends Model
         'amount',
         'debit_amount_currency',
         'credit_amount_currency',
+        'recon_match_id',
     ];
 
     public function debitMove()
@@ -60,6 +62,11 @@ class PartialReconcile extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'creator_id');
+    }
+
+    public function reconMatch(): BelongsTo
+    {
+        return $this->belongsTo(ReconMatch::class, 'recon_match_id');
     }
 
     public function computeDebitCurrencyId()
