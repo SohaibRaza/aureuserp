@@ -34,3 +34,8 @@ opencode.json
 
 # Credential files (keystores, private keys, etc.)
 /credentials/
+
+/.worktrees/
+
+*/graphify-out
+graphify-out/
