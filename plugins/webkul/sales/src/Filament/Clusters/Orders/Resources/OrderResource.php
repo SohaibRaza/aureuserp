@@ -4,6 +4,7 @@ namespace Webkul\Sale\Filament\Clusters\Orders\Resources;
 
 use BackedEnum;
 use Filament\Resources\Pages\Page;
+use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Webkul\Sale\Enums\OrderState;
@@ -13,6 +14,7 @@ use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource\Pages\ListOrder
 use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource\Pages\ManageDeliveries;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource\Pages\ManageInvoices;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource\Pages\ViewOrder;
+use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource\Schemas\QuotationForm;
 use Webkul\Sale\Models\Order;
 
 class OrderResource extends QuotationResource
@@ -41,6 +43,15 @@ class OrderResource extends QuotationResource
     public static function getGlobalSearchResultDetails(Model $record): array
     {
         return QuotationResource::getGlobalSearchResultDetails($record);
+    }
+
+    public static function form(Schema $schema): Schema
+    {
+        return QuotationForm::configure(
+            $schema,
+            static::getCustomFormFields(),
+            isOrder: true,
+        );
     }
 
     public static function getRecordSubNavigation(Page $page): array

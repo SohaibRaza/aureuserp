@@ -52,7 +52,7 @@ use Webkul\Support\Models\UOM;
 
 class QuotationForm
 {
-    public static function configure(Schema $schema, array $customFormFields = []): Schema
+    public static function configure(Schema $schema, array $customFormFields = [], bool $isOrder = false): Schema
     {
         return $schema
             ->components([
@@ -76,6 +76,7 @@ class QuotationForm
                     })
                     ->default(OrderState::DRAFT->value)
                     ->disabled()
+                    ->hidden(fn ($record): bool => $isOrder && $record === null)
                     ->live()
                     ->reactive(),
                 Section::make(__('sales::filament/clusters/orders/resources/quotation.form.section.general.title'))
@@ -83,41 +84,73 @@ class QuotationForm
                     ->schema([
                         Group::make()
                             ->schema([
-                                Group::make()
-                                    ->schema([
-                                        Select::make('partner_id')
-                                            ->label(__('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.customer'))
-                                            ->relationship(
-                                                'partner',
-                                                'name',
-                                                modifyQueryUsing: fn (Builder $query) => $query->orderBy('id')->withTrashed()
-                                            )
-                                            ->searchable()
-                                            ->preload()
-                                            ->required()
-                                            ->createOptionForm(fn (Schema $schema) => CustomerResource::form($schema))
-                                            ->live()
-                                            ->afterStateUpdated(function (Set $set, $state) {
-                                                $partner = $state ? Partner::find($state) : null;
+                                Select::make('partner_id')
+                                    ->label(__('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.customer'))
+                                    ->relationship(
+                                        'partner',
+                                        'name',
+                                        modifyQueryUsing: fn (Builder $query) => $query
+                                            ->where('customer_rank', '>', 0)
+                                            ->whereNull('parent_id')
+                                            ->orderBy('name')
+                                            ->withTrashed()
+                                    )
+                                    ->searchable()
+                                    ->preload()
+                                    ->required()
+                                    ->createOptionForm(fn (Schema $schema) => CustomerResource::form($schema))
+                                    ->createOptionUsing(function (array $data): int {
+                                        $data['customer_rank'] = 1;
 
-                                                $set('user_id', $partner?->user?->id);
-                                                $set('payment_term_id', $partner?->propertyPaymentTerm?->id);
-                                            })
-                                            ->disabled(fn ($record): bool => $record?->locked || in_array($record?->state, [OrderState::SALE, OrderState::CANCEL]))
-                                            ->columnSpan(1)
-                                            ->getOptionLabelFromRecordUsing(fn ($record): string => $record->name.($record->trashed() ? ' (Deleted)' : ''))
-                                            ->disableOptionWhen(fn ($label) => str_contains($label, ' (Deleted)')),
-                                    ]),
+                                        return Partner::create($data)->getKey();
+                                    })
+                                    ->live()
+                                    ->afterStateUpdated(function (Set $set, $state) {
+                                        $partner = $state ? Partner::find($state) : null;
+
+                                        $set('user_id', $partner?->user?->id);
+                                        $set('payment_term_id', $partner?->propertyPaymentTerm?->id);
+                                    })
+                                    ->disabled(fn ($record): bool => $record?->locked || in_array($record?->state, [OrderState::SALE, OrderState::CANCEL]))
+                                    ->columnSpan(1)
+                                    ->getOptionLabelFromRecordUsing(fn ($record): string => $record->name.($record->trashed() ? ' (Deleted)' : ''))
+                                    ->disableOptionWhen(fn ($label) => str_contains($label, ' (Deleted)')),
+                                Select::make('company_id')
+                                    ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.additional-information.fields.company'))
+                                    ->relationship('company', 'name', modifyQueryUsing: fn (Builder $query) => $query->withTrashed())
+                                    ->getOptionLabelFromRecordUsing(function ($record): string {
+                                        return $record->name.($record->trashed() ? ' (Deleted)' : '');
+                                    })
+                                    ->disableOptionWhen(function ($label) {
+                                        return str_contains($label, ' (Deleted)');
+                                    })
+                                    ->searchable()
+                                    ->preload()
+                                    ->required()
+                                    ->live()
+                                    ->afterStateUpdated(function (Set $set, Get $get, ?int $state): void {
+                                        $companyId = $state ?? current_company_id();
+
+                                        $set('currency_id', Company::find($companyId)?->currency_id);
+                                        $set('warehouse_id', static::getDefaultWarehouseId($companyId));
+
+                                        clear_foreign_company_values($set, $get, [
+                                            'payment_term_id' => PaymentTerm::class,
+                                        ], $companyId);
+                                    })
+                                    ->reactive()
+                                    ->default(current_company_id()),
                                 DatePicker::make('validity_date')
                                     ->label(__('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.expiration'))
                                     ->native(false)
                                     ->default(fn (QuotationAndOrderSettings $settings) => now()->addDays($settings->default_quotation_validity))
+                                    ->minDate(fn (Get $get) => $get('date_order'))
                                     ->required()
-                                    ->hidden(fn ($record) => $record)
+                                    ->hidden(fn ($record): bool => $isOrder || filled($record))
                                     ->disabled(fn ($record): bool => $record?->locked || in_array($record?->state, [OrderState::SALE, OrderState::CANCEL])),
                                 DatePicker::make('date_order')
-                                    ->label(function ($record) {
-                                        return $record?->state == OrderState::SALE
+                                    ->label(function ($record) use ($isOrder) {
+                                        return $isOrder || $record?->state == OrderState::SALE
                                             ? __('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.order-date')
                                             : __('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.quotation-date');
                                     })
@@ -136,7 +169,24 @@ class QuotationForm
                                     ->preload()
                                     ->required()
                                     ->columnSpan(1),
-                            ])->columns(2),
+                                Select::make('currency_id')
+                                    ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.additional-information.fields.currency'))
+                                    ->relationship(
+                                        name: 'currency',
+                                        titleAttribute: 'name',
+                                        modifyQueryUsing: fn (Builder $query) => $query->active(),
+                                    )
+                                    ->required()
+                                    ->searchable()
+                                    ->preload()
+                                    ->live()
+                                    ->reactive()
+                                    ->default(current_company()?->currency_id),
+                            ])->columns([
+                                'default' => 1,
+                                'md'      => 2,
+                                'xl'      => 3,
+                            ]),
                     ]),
                 Tabs::make()
                     ->schema([
@@ -162,7 +212,7 @@ class QuotationForm
                                     ->visible(fn (Get $get) => $get('currency_id') && ! empty($get('products'))),
                             ]),
                         Tab::make(__('Optional Products'))
-                            ->hidden(fn ($record) => $record && ! in_array($record->state, [OrderState::DRAFT, OrderState::SENT]))
+                            ->hidden(fn ($record): bool => $isOrder || ($record && ! in_array($record->state, [OrderState::DRAFT, OrderState::SENT])))
                             ->icon('heroicon-o-arrow-path-rounded-square')
                             ->schema(function (Set $set, Get $get) {
                                 return [
@@ -209,11 +259,13 @@ class QuotationForm
                                             ->live()
                                             ->visible(fn (): bool => static::canUseInventoryWarehouses()),
                                         DatePicker::make('commitment_date')
+                                            ->minDate(fn (Get $get) => $get('date_order'))
                                             ->disabled(fn ($record) => in_array($record?->state, [OrderState::CANCEL]))
                                             ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.shipping.fields.commitment-date'))
                                             ->native(false),
                                     ]),
                                 Fieldset::make(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.tracking.title'))
+                                    ->hidden($isOrder)
                                     ->schema([
                                         TextInput::make('origin')
                                             ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.tracking.fields.source-document'))
@@ -235,46 +287,8 @@ class QuotationForm
                                             ->preload(),
                                     ]),
                                 Fieldset::make(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.additional-information.title'))
-                                    ->schema([
-                                        Select::make('company_id')
-                                            ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.additional-information.fields.company'))
-                                            ->relationship('company', 'name', modifyQueryUsing: fn (Builder $query) => $query->withTrashed())
-                                            ->getOptionLabelFromRecordUsing(function ($record): string {
-                                                return $record->name.($record->trashed() ? ' (Deleted)' : '');
-                                            })
-                                            ->disableOptionWhen(function ($label) {
-                                                return str_contains($label, ' (Deleted)');
-                                            })
-                                            ->searchable()
-                                            ->preload()
-                                            ->live()
-                                            ->afterStateUpdated(function (Set $set, Get $get, ?int $state): void {
-                                                $companyId = $state ?? current_company_id();
-
-                                                $set('currency_id', Company::find($state)?->currency_id);
-                                                $set('warehouse_id', static::getDefaultWarehouseId($companyId));
-
-                                                clear_foreign_company_values($set, $get, [
-                                                    'payment_term_id' => PaymentTerm::class,
-                                                ], $companyId);
-                                            })
-                                            ->reactive()
-                                            ->default(current_company_id()),
-                                        Select::make('currency_id')
-                                            ->label(__('sales::filament/clusters/orders/resources/quotation.form.tabs.other-information.fieldset.additional-information.fields.currency'))
-                                            ->relationship(
-                                                name: 'currency',
-                                                titleAttribute: 'name',
-                                                modifyQueryUsing: fn (Builder $query) => $query->active(),
-                                            )
-                                            ->required()
-                                            ->searchable()
-                                            ->preload()
-                                            ->live()
-                                            ->reactive()
-                                            ->default(current_company()?->currency_id),
-                                        ...$customFormFields,
-                                    ]),
+                                    ->schema($customFormFields)
+                                    ->visible(! empty($customFormFields)),
                             ]),
                         Tab::make(__('sales::filament/clusters/orders/resources/quotation.form.tabs.term-and-conditions.title'))
                             ->icon('heroicon-o-clipboard-document-list')
@@ -313,6 +327,8 @@ class QuotationForm
             ->addActionLabel(__('sales::filament/clusters/orders/resources/quotation.form.tabs.order-line.repeater.products.add-product'))
             ->collapsible()
             ->defaultItems(0)
+            ->required()
+            ->minItems(1)
             ->itemLabel(fn (array $state): ?string => $state['name'] ?? null)
             ->deleteAction(function (Action $action) {
                 $action->requiresConfirmation();
@@ -488,6 +504,7 @@ class QuotationForm
                     ->required()
                     ->default(1)
                     ->numeric()
+                    ->minValue(0.000001)
                     ->maxValue(99999999999)
                     ->live(onBlur: true)
                     ->suffix(function ($record, Get $get): mixed {

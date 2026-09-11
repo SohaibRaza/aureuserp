@@ -18,6 +18,7 @@ use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource\Actions\Cre
 use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource\Actions\LockAndUnlockAction;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource\Pages\EditQuotation;
 use Webkul\Sale\Models\Order;
+use Webkul\Sale\Models\Partner;
 
 require_once __DIR__.'/../../../../support/tests/Helpers/TestBootstrapHelper.php';
 require_once __DIR__.'/../../../../support/tests/Helpers/FilamentHelper.php';
@@ -90,14 +91,17 @@ it('renders the sale order create page', function () {
     Livewire::test(CreateOrder::class)->assertOk();
 });
 
-it('creates a quotation through the create form', function () {
-    FilamentHelper::actingAs(['view_any_sale_order', 'create_sale_order']);
+it('creates and confirms a sales order through the create form', function () {
+    $user = FilamentHelper::actingAs(['view_any_sale_order', 'create_sale_order']);
 
-    $partner = SaleHelper::partner();
+    $partner = Partner::factory()->create(['customer_rank' => 1]);
+    $company = $user->defaultCompany;
 
     Livewire::test(CreateOrder::class)
         ->fillForm([
             'partner_id'      => $partner->id,
+            'company_id'      => $company->id,
+            'currency_id'     => $company->currency_id,
             'date_order'      => now(),
             'validity_date'   => now()->addDays(30),
             'payment_term_id' => PaymentTerm::query()->value('id'),
@@ -105,7 +109,39 @@ it('creates a quotation through the create form', function () {
         ->call('create')
         ->assertHasNoFormErrors();
 
-    expect(Order::query()->where('partner_id', $partner->id)->exists())->toBeTrue();
+    expect(Order::query()
+        ->where('partner_id', $partner->id)
+        ->where('company_id', $company->id)
+        ->where('state', OrderState::SALE)
+        ->exists())->toBeTrue();
+});
+
+it('only offers customer parties in the sales order customer dropdown', function () {
+    FilamentHelper::actingAs(['view_any_sale_order', 'create_sale_order']);
+
+    $customer = Partner::factory()->create([
+        'customer_rank' => 1,
+        'parent_id'     => null,
+    ]);
+
+    $internalUserPartner = Partner::factory()->create([
+        'customer_rank' => 0,
+        'parent_id'     => null,
+    ]);
+
+    $contact = Partner::factory()->create([
+        'customer_rank' => 1,
+        'parent_id'     => $customer->id,
+    ]);
+
+    $options = Livewire::test(CreateOrder::class)
+        ->instance()
+        ->getSchemaComponent('form.partner_id')
+        ->getOptions();
+
+    expect(array_keys($options))->toContain($customer->id)
+        ->and(array_keys($options))->not->toContain($internalUserPartner->id)
+        ->and(array_keys($options))->not->toContain($contact->id);
 });
 
 it('confirms a draft quotation into a sale order through the action', function () {
