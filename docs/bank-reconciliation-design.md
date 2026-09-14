@@ -1,6 +1,8 @@
 # Bank Reconciliation — Design Document
 
-**Status:** Design → implementation reference · **Date:** 2026-09-07
+> **Historical design warning (2026-09-15):** This document records the original 2026-09-07 design and is not the canonical description of the completed U1-U18 architecture. In particular, its candidate-line and match-accounting sections predate the decision to match posted liquidity lines and to keep allocation-only bank clearing separate from AR/AP partial/full reconciliation. Use [the accounting specification](bank-reconciliation-accounting-specification.md), [architecture](bank-reconciliation-architecture.md), and [ADRs](adr/README.md) for current decisions. The implementation plan remains the requirement/change history.
+
+**Status:** Historical design; retained for traceability · **Date:** 2026-09-07
 **Scope:** Full bank reconciliation for AureusERP, built in the app namespace (no `plugins/webkul/*` edits), integrated with the existing Odoo-style ledger primitives (`accounts_account_moves`, `accounts_account_move_lines`, `accounts_partial_reconciles`, `accounts_full_reconciles`, `accounts_bank_statements[_lines]`).
 
 ---
