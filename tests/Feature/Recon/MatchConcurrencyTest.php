@@ -8,28 +8,27 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\Process;
 use Webkul\Account\Models\BankStatement;
 use Webkul\Security\Models\User;
-use Webkul\Support\Models\Company;
 
 beforeEach(function (): void {
     TestBootstrapHelper::ensurePluginInstalled('accounts');
-    $this->company = Company::query()->firstOrFail();
-    $this->actingAs(User::query()->firstOrFail());
+    test()->actingAs(User::query()->firstOrFail());
     config(['reconciliation.financial_mutations_enabled' => true]);
     config(['reconciliation.require_company_rollout' => false]);
 });
 
 it('serializes genuine concurrent confirmations without partial or duplicate effects', function (): void {
     if (! filter_var(config('testing.run_reconciliation_concurrency', false), FILTER_VALIDATE_BOOL)) {
-        $this->markTestSkipped('Run explicitly with AUREUSERP_RUN_CONCURRENCY_TEST=1 on an isolated disposable database.');
+        test()->markTestSkipped('Run explicitly with AUREUSERP_RUN_CONCURRENCY_TEST=1 on an isolated disposable database.');
     }
 
     if (DB::connection()->getDriverName() !== 'pgsql') {
-        $this->markTestSkipped('The concurrency proof requires PostgreSQL row-level locking.');
+        test()->markTestSkipped('The concurrency proof requires PostgreSQL row-level locking.');
     }
 
     $testDatabase = (string) DB::connection()->getDatabaseName();
+    $creatorId = (int) User::query()->firstOrFail()->getKey();
 
-    expect($testDatabase)->toMatch('/^aureuserp_u18_rehearsal_[A-Za-z0-9_]+$/');
+    expect($testDatabase)->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
 
     $reconciliation = BankReconciliation::query()->create([
         ...validBankReconciliationAttributes(),
@@ -66,7 +65,7 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
         'journal_id'  => $reconciliation->journal_id,
         'company_id'  => $reconciliation->company_id,
         'currency_id' => $reconciliation->currency_id,
-        'creator_id'  => auth()->id(),
+        'creator_id'  => $creatorId,
         'name'        => fake()->unique()->bothify('U18-MOVE-####'),
         'state'       => 'posted',
         'move_type'   => 'entry',
@@ -84,7 +83,7 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
         'company_currency_id' => $reconciliation->currency_id,
         'account_id'          => $reconciliation->liquidity_account_id,
         'currency_id'         => $reconciliation->currency_id,
-        'creator_id'          => auth()->id(),
+        'creator_id'          => $creatorId,
         'date'                => '2026-09-15',
         'parent_state'        => 'posted',
         'debit'               => '0.0000',
@@ -102,7 +101,7 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
         'company_currency_id' => $reconciliation->currency_id,
         'account_id'          => $counterpartId,
         'currency_id'         => $reconciliation->currency_id,
-        'creator_id'          => auth()->id(),
+        'creator_id'          => $creatorId,
         'date'                => '2026-09-15',
         'parent_state'        => 'posted',
         'debit'               => '125.0000',
@@ -124,6 +123,8 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
     $barrier = sys_get_temp_dir().'/aureuserp-u18-'.bin2hex(random_bytes(8));
     mkdir($barrier, 0700);
     $gate = $barrier.'/go';
+    $firstReady = $barrier.'/ready-1';
+    $secondReady = $barrier.'/ready-2';
     $worker = <<<'PHP'
 $base = $argv[1];
 $ready = $argv[2];
@@ -160,7 +161,7 @@ try {
 }
 PHP;
 
-    $makeProcess = function (int $number) use ($worker, $barrier, $gate, $reconciliation, $bankLine, $ledgerLineId, $testDatabase): Process {
+    $makeProcess = function (int $number) use ($worker, $barrier, $gate, $reconciliation, $bankLine, $ledgerLineId, $testDatabase, $creatorId): Process {
         return new Process([
             PHP_BINARY,
             '-d', 'memory_limit=512M',
@@ -172,7 +173,7 @@ PHP;
             (string) $reconciliation->id,
             (string) $bankLine->id,
             (string) $ledgerLineId,
-            (string) auth()->id(),
+            (string) $creatorId,
         ], base_path(), [
             ...$_ENV,
             'APP_ENV'                       => 'testing',
@@ -190,11 +191,11 @@ PHP;
         $second->start();
 
         $deadline = microtime(true) + 20;
-        while ((! file_exists($barrier.'/ready-1') || ! file_exists($barrier.'/ready-2')) && microtime(true) < $deadline) {
+        while ((! file_exists($firstReady) || ! file_exists($secondReady)) && microtime(true) < $deadline) {
             usleep(10000);
         }
-        if (! file_exists($barrier.'/ready-1') || ! file_exists($barrier.'/ready-2')) {
-            $this->fail(sprintf(
+        if (! file_exists($firstReady) || ! file_exists($secondReady)) {
+            test()->fail(sprintf(
                 'Concurrent workers did not reach the barrier. First: %s %s Second: %s %s',
                 trim($first->getOutput()),
                 trim($first->getErrorOutput()),
@@ -241,8 +242,8 @@ PHP;
                 $process->stop(1);
             }
         }
-        @unlink($barrier.'/ready-1');
-        @unlink($barrier.'/ready-2');
+        @unlink($firstReady);
+        @unlink($secondReady);
         @unlink($gate);
         @rmdir($barrier);
 

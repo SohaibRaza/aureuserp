@@ -27,8 +27,6 @@ beforeEach(function () {
     URL::resolveMissingNamedRoutesUsing(fn () => '#');
 
     AccountHelper::actingAsAdmin();
-
-    $this->company = AccountHelper::company();
 });
 
 function registerFor(Move $move, Journal $journal): PaymentRegister
@@ -62,9 +60,13 @@ function postedInvoice(MoveType $type): Move
 
 it('offers the journal bank account as the only recipient bank for an inbound payment', function () {
     $journal = AccountHelper::bankJournal();
+    $company = AccountHelper::company();
 
     $bankAccount = BankAccount::factory()->create([
-        'partner_id' => $this->company->partner_id,
+        'partner_id'  => null,
+        'company_id'  => $company->id,
+        'currency_id' => $company->currency_id,
+        'source_type' => 'manual',
     ]);
 
     $journal->update(['bank_account_id' => $bankAccount->id]);
@@ -112,9 +114,13 @@ it('offers the vendor bank accounts as recipient banks for an outbound payment',
 
 it('resolves the batch account to a bank account model for an inbound payment', function () {
     $journal = AccountHelper::bankJournal();
+    $company = AccountHelper::company();
 
     $bankAccount = BankAccount::factory()->create([
-        'partner_id' => $this->company->partner_id,
+        'partner_id'  => null,
+        'company_id'  => $company->id,
+        'currency_id' => $company->currency_id,
+        'source_type' => 'manual',
     ]);
 
     $journal->update(['bank_account_id' => $bankAccount->id]);

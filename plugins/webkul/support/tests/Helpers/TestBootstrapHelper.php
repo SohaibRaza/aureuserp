@@ -1,16 +1,22 @@
 <?php
 
 use Filament\Facades\Filament;
+use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\PluginManager\PackageServiceProvider;
+use Webkul\Support\Database\Dialects\PostgresDialect;
+
+final class TestBootstrapException extends RuntimeException {}
 
 class TestBootstrapHelper
 {
     private const BOOTSTRAP_CONNECTION = 'test_bootstrap';
+
+    private const FRESH_BOOTSTRAP_PLUGINS = ['products', 'accounts'];
 
     private static bool $isERPInstalled = false;
 
@@ -46,9 +52,9 @@ class TestBootstrapHelper
         $table = static::$pluginTables[$pluginName] ?? null;
 
         static::onCommittedConnection(function () use ($pluginName, $table) {
-            $isInstalled = $table
-                ? Schema::hasTable($table)
-                : DB::table('plugins')->where('name', $pluginName)->where('is_installed', true)->exists();
+            $isMarkedInstalled = Schema::hasTable('plugins')
+                && DB::table('plugins')->where('name', $pluginName)->where('is_installed', true)->exists();
+            $isInstalled = $isMarkedInstalled && (! $table || Schema::hasTable($table));
 
             if (! $isInstalled) {
                 Artisan::call("{$pluginName}:install", ['--no-interaction' => true]);
@@ -204,11 +210,19 @@ class TestBootstrapHelper
 
     private static function loadPluginRoutes(string $pluginName): void
     {
-        $routeFile = base_path("plugins/webkul/{$pluginName}/routes/api.php");
+        $pluginRoot = static::pluginRootPath($pluginName);
+        $routeFile = $pluginRoot ? $pluginRoot.'/routes/api.php' : null;
 
-        if (file_exists($routeFile) && ! app()->routesAreCached()) {
+        if ($routeFile && file_exists($routeFile) && ! app()->routesAreCached()) {
             require $routeFile;
         }
+    }
+
+    public static function pluginRootPath(string $pluginName, ?string $pluginsRoot = null): ?string
+    {
+        $matches = glob(($pluginsRoot ?? base_path('plugins'))."/*/{$pluginName}", GLOB_ONLYDIR);
+
+        return count($matches) === 1 ? $matches[0] : null;
     }
 
     public static function ensureERPInstalled(): void
@@ -230,9 +244,11 @@ class TestBootstrapHelper
             return;
         }
 
-        static::dropStalePluginMigrationPaths();
-
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        Artisan::call('migrate:fresh', [
+            '--force'    => true,
+            '--path'     => static::migrationPathsForFreshInstall(),
+            '--realpath' => true,
+        ]);
 
         Artisan::call('erp:install', [
             '--force'          => true,
@@ -285,7 +301,7 @@ class TestBootstrapHelper
         $database = config('database.connections.'.config('database.default').'.database');
         $missingLabel = $missing === [] ? 'the Accounts plugin installation' : implode(', ', $missing);
 
-        throw new RuntimeException(
+        throw new TestBootstrapException(
             "Prepared test database [{$database}] is unavailable ({$missingLabel}). "
             .'Run the explicitly approved test-database preparation steps, then retry with AUREUSERP_TEST_REUSE_DATABASE=1.'
         );
@@ -302,33 +318,19 @@ class TestBootstrapHelper
             return;
         }
 
-        $tables = DB::select(<<<'SQL'
-            SELECT columns.table_name, pg_get_serial_sequence(quote_ident(columns.table_name), columns.column_name) AS sequence
-            FROM information_schema.columns AS columns
-            JOIN information_schema.tables AS tables
-                ON tables.table_schema = columns.table_schema
-                AND tables.table_name = columns.table_name
-                AND tables.table_type = 'BASE TABLE'
-            WHERE columns.table_schema = 'public'
-                AND columns.column_name = 'id'
-        SQL);
-
-        foreach ($tables as $table) {
-            if (blank($table->sequence)) {
-                continue;
-            }
-
-            DB::statement(sprintf(
-                "SELECT setval('%s', GREATEST((SELECT COALESCE(MAX(id), 1) FROM %s), 1), true)",
-                $table->sequence,
-                $table->table_name,
-            ));
-        }
+        (new PostgresDialect)->syncSequences();
     }
 
-    private static function dropStalePluginMigrationPaths(): void
+    /**
+     * @return list<string>
+     */
+    private static function migrationPathsForFreshInstall(): array
     {
         $coreNames = [];
+
+        /** @var Migrator $migrator */
+        $migrator = app('migrator');
+        $paths = [database_path('migrations'), ...$migrator->paths()];
 
         foreach (array_keys(app()->getLoadedProviders()) as $providerClass) {
             if (! is_subclass_of($providerClass, PackageServiceProvider::class)) {
@@ -341,24 +343,40 @@ class TestBootstrapHelper
                 continue;
             }
 
-            $package = Closure::bind(fn () => $this->package, $provider, get_class($provider))();
+            $package = new Package;
+            $provider->configureCustomPackage($package);
 
-            if ($package?->isCore) {
+            if ($package->isCore) {
                 $coreNames[] = $package->shortName();
+            }
+
+            if (! in_array($package->shortName(), self::FRESH_BOOTSTRAP_PLUGINS, true)) {
+                continue;
+            }
+
+            $pluginRoot = static::pluginRootPath($package->shortName());
+            if (! $pluginRoot) {
+                continue;
+            }
+
+            foreach ($package->migrationFileNames as $migration) {
+                $path = "{$pluginRoot}/database/migrations/{$migration}.php";
+
+                if (file_exists($path)) {
+                    $paths[] = $path;
+                }
             }
         }
 
-        $migrator = app('migrator');
+        $allowedNames = array_merge($coreNames, self::FRESH_BOOTSTRAP_PLUGINS);
 
-        Closure::bind(function () use ($coreNames): void {
-            $this->paths = array_values(array_filter($this->paths, function (string $path) use ($coreNames): bool {
-                if (! preg_match('#plugins/webkul/([^/]+)/#', $path, $matches)) {
-                    return true;
-                }
+        return array_values(array_unique(array_filter($paths, function (string $path) use ($allowedNames): bool {
+            if (! preg_match('#plugins/[^/]+/([^/]+)/#', str_replace('\\', '/', $path), $matches)) {
+                return true;
+            }
 
-                return in_array($matches[1], $coreNames, true);
-            }));
-        }, $migrator, get_class($migrator))();
+            return in_array($matches[1], $allowedNames, true);
+        })));
     }
 
     private static function rememberProvidersBootedBeforeFresh(): void
@@ -376,8 +394,8 @@ class TestBootstrapHelper
 
         if (blank($token)) {
             $database = (string) config('database.connections.'.config('database.default').'.database');
-            if (app()->environment('local') && ! str_ends_with($database, '_testing')) {
-                throw new RuntimeException('Refusing to run test bootstrap against the local application database. Set TEST_TOKEN or use a *_testing database.');
+            if (! str_ends_with($database, '_testing')) {
+                throw new TestBootstrapException('Refusing to run test bootstrap against a database that does not end in _testing.');
             }
 
             return;
@@ -387,7 +405,12 @@ class TestBootstrapHelper
 
         $connection = config("database.connections.{$default}");
 
-        $workerDatabase = $connection['database'].'_p'.$token;
+        $testDatabase = (string) $connection['database'];
+        if (! str_ends_with($testDatabase, '_testing')) {
+            throw new TestBootstrapException('Refusing to create a parallel worker database from a database that does not end in _testing.');
+        }
+
+        $workerDatabase = static::workerDatabaseName($testDatabase, (string) $token);
 
         if ($connection['driver'] === 'pgsql') {
             $pdo = new PDO(
@@ -396,11 +419,17 @@ class TestBootstrapHelper
                 $connection['password'],
             );
 
-            $exists = $pdo->query('SELECT 1 FROM pg_database WHERE datname = '.$pdo->quote($workerDatabase))->fetchColumn();
+            $statement = $pdo->prepare('SELECT 1 FROM pg_database WHERE datname = :database');
+            if ($statement === false) {
+                throw new TestBootstrapException('Unable to prepare the parallel test database lookup.');
+            }
+
+            $statement->execute(['database' => $workerDatabase]);
+            $exists = $statement->fetchColumn() !== false;
 
             if (! $exists) {
                 try {
-                    $pdo->exec('CREATE DATABASE "'.$workerDatabase.'"');
+                    $pdo->exec('CREATE DATABASE '.static::quoteDatabaseIdentifier($workerDatabase, 'pgsql')); // NOSONAR: identifier is restricted by workerDatabaseName().
                 } catch (PDOException $e) {
                     if (! str_contains($e->getMessage(), 'already exists')) {
                         throw $e;
@@ -414,7 +443,7 @@ class TestBootstrapHelper
                 $connection['password'],
             );
 
-            $pdo->exec('CREATE DATABASE IF NOT EXISTS `'.$workerDatabase."` CHARACTER SET utf8mb4 COLLATE 'utf8mb4_unicode_ci'");
+            $pdo->exec('CREATE DATABASE IF NOT EXISTS '.static::quoteDatabaseIdentifier($workerDatabase, 'mysql')." CHARACTER SET utf8mb4 COLLATE 'utf8mb4_unicode_ci'"); // NOSONAR: identifier is restricted by workerDatabaseName().
         }
 
         config(["database.connections.{$default}.database" => $workerDatabase]);
@@ -428,6 +457,22 @@ class TestBootstrapHelper
         $_SERVER['DB_DATABASE'] = $workerDatabase;
 
         static::ensureWorkerViewPath($token);
+    }
+
+    private static function workerDatabaseName(string $testDatabase, string $token): string
+    {
+        $workerDatabase = $testDatabase.'_p'.$token;
+
+        if (! preg_match('/\A[A-Za-z_]\w*\z/', $workerDatabase)) {
+            throw new TestBootstrapException('Refusing to create a parallel worker database with an unsafe identifier.');
+        }
+
+        return $workerDatabase;
+    }
+
+    private static function quoteDatabaseIdentifier(string $database, string $driver): string
+    {
+        return $driver === 'pgsql' ? '"'.$database.'"' : '`'.$database.'`';
     }
 
     private static function ensureWorkerViewPath(string $token): void
