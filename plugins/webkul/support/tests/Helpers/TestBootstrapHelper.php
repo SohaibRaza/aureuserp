@@ -252,6 +252,7 @@ class TestBootstrapHelper
 
         Artisan::call('erp:install', [
             '--force'          => true,
+            '--no-interaction' => true,
             '--admin-name'     => 'Test Admin',
             '--admin-email'    => 'admin@example.com',
             '--admin-password' => 'admin123',
