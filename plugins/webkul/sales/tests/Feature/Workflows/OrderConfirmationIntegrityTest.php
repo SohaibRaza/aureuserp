@@ -37,3 +37,20 @@ it('rolls back confirmation when a late synchronous effect fails', function (): 
     expect($order->refresh()->state)->toBe(OrderState::DRAFT)
         ->and($order->operations()->count())->toBe(0);
 });
+
+it('does not duplicate procurement when confirmation is replayed', function (): void {
+    $warehouse = InventoryHelper::warehouse(ReceptionStep::ONE_STEP, DeliveryStep::ONE_STEP);
+    $product = SaleHelper::product();
+    $order = SaleHelper::order(['warehouse_id' => $warehouse->id]);
+
+    SaleHelper::line($order, $product, 10, 100);
+
+    SaleHelper::confirm($order);
+
+    $operationIds = $order->refresh()->operations()->pluck('id')->all();
+
+    SaleHelper::confirm($order);
+
+    expect($order->refresh()->state)->toBe(OrderState::SALE)
+        ->and($order->operations()->pluck('id')->all())->toBe($operationIds);
+});

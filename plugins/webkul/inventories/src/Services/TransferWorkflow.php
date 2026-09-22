@@ -3,6 +3,7 @@
 namespace Webkul\Inventory\Services;
 
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\OperationState;
 use Webkul\Inventory\Enums\OperationType;
@@ -107,41 +108,68 @@ class TransferWorkflow
 
     public function createReturn(Operation $operation, array $moveQuantities = []): Operation
     {
-        $sourceMoves = Move::query()
-            ->whereIn('id', array_keys($moveQuantities))
-            ->where('operation_id', $operation->id)
-            ->get();
+        return $operation->getConnection()->transaction(function () use ($operation, $moveQuantities): Operation {
+            $sourceMoves = $operation->moves()
+                ->whereIn('id', array_keys($moveQuantities))
+                ->get();
+
+            $this->assertReturnRequest($moveQuantities, $sourceMoves);
+
+            foreach ($sourceMoves as $move) {
+                app(MoveReserver::class)->release(
+                    $move->moveDestinations->filter(
+                        fn (Move $destination) => ! in_array($destination->state, [MoveState::DONE, MoveState::CANCELED])
+                    )
+                );
+            }
+
+            $return = $operation->replicate(['back_order_id', 'closed_at', 'is_printed'])
+                ->fill($this->buildReturnOperationAttributes($operation));
+            $return->setConnection($operation->getConnectionName());
+
+            $return->save();
+
+            foreach ($sourceMoves as $move) {
+                $this->createReturnMove($return, $move, $moveQuantities[$move->id]);
+            }
+
+            $return->refresh();
+
+            $return = $this->reserve($return);
+
+            if (Package::isPluginInstalled('purchases')) {
+                $return->purchaseOrders()->attach($operation->purchaseOrders->pluck('id'));
+            }
+
+            OperationReturned::dispatch($operation);
+
+            $this->crossLink($operation, $return);
+
+            return $return;
+        });
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $moveQuantities
+     * @param  Collection<int, Move>  $sourceMoves
+     */
+    protected function assertReturnRequest(array $moveQuantities, Collection $sourceMoves): void
+    {
+        if ($moveQuantities === [] || $sourceMoves->count() !== count($moveQuantities)) {
+            throw new \InvalidArgumentException('A return requires quantities for existing source moves.');
+        }
 
         foreach ($sourceMoves as $move) {
-            app(MoveReserver::class)->release(
-                $move->moveDestinations->filter(
-                    fn (Move $destination) => ! in_array($destination->state, [MoveState::DONE, MoveState::CANCELED])
-                )
-            );
+            $entry = $moveQuantities[$move->id];
+            $quantity = is_array($entry) ? ($entry['quantity'] ?? 0) : $entry;
+
+            if ((! is_int($quantity) && ! is_float($quantity))
+                || ! is_finite((float) $quantity)
+                || float_compare((float) $quantity, 0, precisionRounding: $move->uom->rounding) <= 0
+            ) {
+                throw new \InvalidArgumentException('Return quantities must be positive.');
+            }
         }
-
-        $return = $operation->replicate(['back_order_id', 'closed_at', 'is_printed'])
-            ->fill($this->buildReturnOperationAttributes($operation));
-
-        $return->save();
-
-        foreach ($sourceMoves as $move) {
-            $this->createReturnMove($return, $move, $moveQuantities[$move->id]);
-        }
-
-        $return->refresh();
-
-        $return = $this->reserve($return);
-
-        if (Package::isPluginInstalled('purchases')) {
-            $return->purchaseOrders()->attach($operation->purchaseOrders->pluck('id'));
-        }
-
-        $this->crossLink($operation, $return);
-
-        OperationReturned::dispatch($operation);
-
-        return $return;
     }
 
     protected function createReturnMove(Operation $return, Move $move, mixed $entry): void
@@ -151,6 +179,7 @@ class TransferWorkflow
         $isRefund = is_array($entry) ? (bool) ($entry['to_refund'] ?? true) : true;
 
         $returnMove = $move->replicate()->fill($this->buildReturnMoveAttributes($return, $move, $quantity, $isRefund));
+        $returnMove->setConnection($return->getConnectionName());
 
         $returnMove->save();
 

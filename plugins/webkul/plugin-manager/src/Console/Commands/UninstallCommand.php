@@ -3,9 +3,11 @@
 namespace Webkul\PluginManager\Console\Commands;
 
 use Closure;
+use DomainException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Webkul\PluginManager\Events\UninstallingPlugins;
 use Webkul\PluginManager\Package;
 
 class UninstallCommand extends Command
@@ -33,6 +35,14 @@ class UninstallCommand extends Command
 
     public function handle()
     {
+        try {
+            UninstallingPlugins::dispatch([$this->package->shortName()]);
+        } catch (DomainException $exception) {
+            $this->error('Uninstallation blocked: '.$exception->getMessage());
+
+            return self::FAILURE;
+        }
+
         if (! $this->package->isInstalled()) {
             $this->error("Package {$this->package->shortName()} is not installed!");
 

@@ -2,6 +2,7 @@
 
 namespace Webkul\Sale\Services;
 
+use Illuminate\Support\Facades\DB;
 use Webkul\Sale\Enums\InvoiceStatus;
 use Webkul\Sale\Enums\OrderState;
 use Webkul\Sale\Events\OrderCanceled;
@@ -9,6 +10,7 @@ use Webkul\Sale\Events\OrderConfirmed;
 use Webkul\Sale\Events\OrderDrafted;
 use Webkul\Sale\Events\OrderLocked;
 use Webkul\Sale\Events\OrderUnlocked;
+use Webkul\Sale\Exceptions\OrderConfirmationException;
 use Webkul\Sale\Models\Order;
 use Webkul\Sale\Settings\QuotationAndOrderSettings;
 
@@ -42,20 +44,34 @@ class OrderWorkflow
 
     public function confirm(Order $record): Order
     {
-        $record->update([
-            'state'          => OrderState::SALE,
-            'invoice_status' => InvoiceStatus::TO_INVOICE,
-        ]);
+        return DB::transaction(function () use ($record): Order {
+            $record = Order::query()
+                ->lockForUpdate()
+                ->findOrFail($record->getKey());
 
-        app(ProcurementRequester::class)->requestForLines($record->lines);
+            if ($record->state === OrderState::SALE) {
+                return $record;
+            }
 
-        $record->update(['locked' => $this->settings->enable_lock_confirm_sales]);
+            if (! in_array($record->state, [OrderState::DRAFT, OrderState::SENT], true)) {
+                throw new OrderConfirmationException('Only draft or sent orders can be confirmed.');
+            }
 
-        $record = app(OrderCalculator::class)->recompute($record);
+            $record->update([
+                'state'          => OrderState::SALE,
+                'invoice_status' => InvoiceStatus::TO_INVOICE,
+            ]);
 
-        OrderConfirmed::dispatch($record);
+            app(ProcurementRequester::class)->requestForLines($record->lines);
 
-        return $record;
+            $record->update(['locked' => $this->settings->enable_lock_confirm_sales]);
+
+            $record = app(OrderCalculator::class)->recompute($record);
+
+            OrderConfirmed::dispatch($record);
+
+            return $record;
+        });
     }
 
     public function backToQuotation(Order $record): Order

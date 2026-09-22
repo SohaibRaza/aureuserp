@@ -2,7 +2,6 @@
 
 namespace Webkul\Sale\Http\Controllers\API\V1;
 
-use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +19,7 @@ use Spatie\QueryBuilder\QueryBuilder;
 use Webkul\Product\Models\Product;
 use Webkul\Product\Services\PriceListResolver;
 use Webkul\Sale\Enums\OrderState;
+use Webkul\Sale\Exceptions\OrderConfirmationException;
 use Webkul\Sale\Facades\SaleOrder as SaleOrderFacade;
 use Webkul\Sale\Http\Requests\OrderRequest;
 use Webkul\Sale\Http\Resources\V1\OrderResource;
@@ -187,7 +187,7 @@ class OrderController extends Controller
     #[Endpoint('Confirm order', 'Confirm a quotation and convert it to a sale order')]
     #[UrlParam('id', 'integer', 'The order ID', required: true, example: 1)]
     #[ResponseFromApiResource(OrderResource::class, Order::class, with: ['partner', 'lines'], additional: ['message' => 'Order confirmed successfully.'])]
-    #[Response(status: 422, description: 'Only draft or sent orders can be confirmed.', content: '{"message": "Only draft or sent orders can be confirmed."}')]
+    #[Response(status: 422, description: 'Cancelled orders cannot be confirmed.', content: '{"message": "Only draft or sent orders can be confirmed."}')]
     #[Response(status: 404, description: 'Order not found', content: '{"message": "Resource not found."}')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function confirm(string $id)
@@ -196,15 +196,9 @@ class OrderController extends Controller
 
         Gate::authorize('update', $order);
 
-        if (! in_array($order->state, [OrderState::DRAFT, OrderState::SENT], true)) {
-            return response()->json([
-                'message' => 'Only draft or sent orders can be confirmed.',
-            ], 422);
-        }
-
         try {
             $order = SaleOrderFacade::confirmSaleOrder($order);
-        } catch (Exception $exception) {
+        } catch (OrderConfirmationException $exception) {
             return response()->json([
                 'message' => $exception->getMessage(),
             ], 422);

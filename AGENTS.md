@@ -1,5 +1,58 @@
-<laravel-boost-guidelines>
-=== foundation rules ===
+# Agent Guidelines
+
+## Coding Guidelines
+
+- Always follow best practices and coding standards.
+- Follow SOLID, DRY, YAGNI, KISS, and other principles.
+- Always try to use the most efficient and concise code possible.
+- Prioritize reusability and maintainability of the code.
+- Always update the relevant documentation when making changes to the code.
+
+## 🛑 Git Operations
+
+The agent **never** runs destructive git commands unless the user typed the instruction in a fresh message of their own words.
+
+**Without explicit user instruction, do not run:**
+
+- `git commit` (incl. `--amend`, reword, fixup, squash, `--no-verify`)
+- `git push` (any remote, branch, `--force`, `--force-with-lease`, mirror, tags)
+- `git rebase`, `git merge`, `git cherry-pick`, `git revert`
+- `git reset` (any flavor: `--hard`, `--mixed`, `--soft`)
+- `git switch`, `git checkout` (to a different branch)
+- `git branch -D` / `git branch -M`
+- `git tag` (create, delete, push)
+- `git stash drop`, `git stash clear`, `git clean -fd`
+- `git replace`, `git fast-import`, `git update-ref`, `git symbolic-ref`
+- `git reflog expire`, `git filter-branch`, `git filter-repo`, `git gc --prune`, `git fsck --no-reflogs`
+
+**Always allowed:** `git status*`, `git log*`, `git diff*`, `git show*`, `git branch -a*`, `git branch --list*`, `git remote -v*`, `git reflog*`, `git add*`.
+
+**Commit attribution:** Never add any AI-agent/assistant attribution to commits — no "Generated with", "Co-Authored-By", AI "Authored-by", bot footers, or any other reference to an agent in the message body or trailers. Commit messages are authored by the repository owner only. (Applies to every commit, including amends.)
+
+<!-- rtk-instructions v2 -->
+## RTK (Rust Token Killer) - Token-Optimized Commands
+
+### Golden Rule
+
+**Always prefix commands with `rtk` if it's installed**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged.
+
+**Important**: Even in command chains with `&&`, use `rtk`:
+
+```bash
+# ❌ Wrong
+git add . && git commit -m "msg" && git push
+
+# ✅ Correct
+rtk git add . && rtk git commit -m "msg" && rtk git push
+```
+
+```bash
+if command -v rtk >/dev/null 2>&1; then
+  rtk <command>
+else
+  <command>
+fi
+```
 
 # Laravel Boost Guidelines
 
@@ -105,7 +158,7 @@ This project has domain-specific skills available. You MUST activate the relevan
 ## Constructors
 
 - Use PHP 8 constructor property promotion in `__construct()`.
-    - `public function __construct(public GitHub $github) { }`
+  - `public function __construct(public GitHub $github) { }`
 - Do not allow empty `__construct()` methods with zero parameters unless the constructor is private.
 
 ## Type Declarations

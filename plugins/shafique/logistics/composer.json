@@ -1,0 +1,7 @@
+{
+    "name": "shafique/logistics",
+    "description": "Company-scoped Logistics foundation (no operational posting)",
+    "type": "library",
+    "autoload": {"psr-4": {"Shafique\\Logistics\\": "src/"}},
+    "extra": {"laravel": {"providers": ["Shafique\\Logistics\\LogisticsServiceProvider"]}}
+}

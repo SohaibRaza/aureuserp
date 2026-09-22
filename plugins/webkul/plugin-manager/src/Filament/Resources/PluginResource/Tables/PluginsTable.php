@@ -2,6 +2,7 @@
 
 namespace Webkul\PluginManager\Filament\Resources\PluginResource\Tables;
 
+use DomainException;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Schema as DBSchema;
 use RuntimeException;
 use Throwable;
 use Webkul\PluginManager\Console\Commands\UninstallCommand;
+use Webkul\PluginManager\Events\UninstallingPlugins;
 use Webkul\PluginManager\Filament\Resources\PluginResource;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
@@ -240,6 +242,24 @@ class PluginsTable
         $errors = [];
 
         $dependents = $record->getDependentsFromConfig();
+
+        $affectedPluginNames = collect($dependents)
+            ->push($record->name)
+            ->unique()
+            ->values();
+
+        try {
+            UninstallingPlugins::dispatch($affectedPluginNames->all());
+        } catch (DomainException $exception) {
+            Notification::make()
+                ->title(__('plugin-manager::filament/resources/plugin.notifications.uninstalled-blocked.title'))
+                ->body($exception->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
+        }
 
         $installedDependents = collect($dependents)
             ->filter(fn ($dependent) => Package::isPluginInstalled($dependent))

@@ -207,3 +207,16 @@ it('returns return validation error when delivery is not done', function () {
         ->assertUnprocessable()
         ->assertJsonPath('message', 'Only done operations can be returned.');
 });
+
+it('leaves no orphan when the return API has no quantity-map contract', function (): void {
+    actingAsInventoryDeliveryApiUser(['update_inventory_delivery']);
+
+    $delivery = createDeliveryRecord(['state' => OperationState::DONE]);
+    $operationCount = Operation::query()->count();
+
+    $this->postJson(deliveryRoute('return', $delivery->id))
+        ->assertServerError()
+        ->assertJsonPath('message', 'A return requires quantities for existing source moves.');
+
+    expect(Operation::query()->count())->toBe($operationCount);
+});

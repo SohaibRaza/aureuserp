@@ -107,14 +107,14 @@ function createOrderViaApi(array $overrides = []): TestResponse
 }
 
 it('requires authentication to list orders', function () {
-    $this->getJson(salesOrderRoute('index'))
+    test()->getJson(salesOrderRoute('index'))
         ->assertUnauthorized();
 });
 
 it('forbids listing orders without permission', function () {
     actingAsSalesOrderApiUser();
 
-    $this->getJson(salesOrderRoute('index'))
+    test()->getJson(salesOrderRoute('index'))
         ->assertForbidden();
 });
 
@@ -122,7 +122,7 @@ it('creates an order with lines in a single API call', function () {
     actingAsSalesOrderApiUser(['create_sale_order']);
 
     $payload = salesOrderPayload(lineCount: 2);
-    $response = $this->postJson(salesOrderRoute('store'), $payload);
+    $response = test()->postJson(salesOrderRoute('store'), $payload);
 
     $response
         ->assertCreated()
@@ -133,13 +133,13 @@ it('creates an order with lines in a single API call', function () {
 
     $orderId = $response->json('data.id');
 
-    $this->assertDatabaseHas('sales_orders', [
+    test()->assertDatabaseHas('sales_orders', [
         'id'              => $orderId,
         'partner_id'      => $payload['partner_id'],
         'payment_term_id' => $payload['payment_term_id'],
     ]);
 
-    $this->assertDatabaseCount('sales_order_lines', 2);
+    test()->assertDatabaseCount('sales_order_lines', 2);
 });
 
 it('validates required fields when creating an order', function (string $field) {
@@ -148,7 +148,7 @@ it('validates required fields when creating an order', function (string $field) 
     $payload = salesOrderPayload();
     unset($payload[$field]);
 
-    $this->postJson(salesOrderRoute('store'), $payload)
+    test()->postJson(salesOrderRoute('store'), $payload)
         ->assertUnprocessable()
         ->assertJsonValidationErrors([$field]);
 })->with(SALES_ORDER_REQUIRED_FIELDS);
@@ -158,7 +158,7 @@ it('shows an order for authorized users', function () {
 
     $order = Order::factory()->create();
 
-    $this->getJson(salesOrderRoute('show', $order).'?include=lines')
+    test()->getJson(salesOrderRoute('show', $order).'?include=lines')
         ->assertOk()
         ->assertJsonPath('data.id', $order->id)
         ->assertJsonStructure(['data' => SALES_ORDER_JSON_STRUCTURE]);
@@ -167,7 +167,7 @@ it('shows an order for authorized users', function () {
 it('returns 404 for a non-existent order', function () {
     actingAsSalesOrderApiUser(['view_sale_order']);
 
-    $this->getJson(salesOrderRoute('show', 999999))
+    test()->getJson(salesOrderRoute('show', 999999))
         ->assertNotFound();
 });
 
@@ -196,18 +196,18 @@ it('updates an order and syncs its lines via API payload', function () {
         ],
     ];
 
-    $this->patchJson(salesOrderRoute('update', $order), $updatePayload)
+    test()->patchJson(salesOrderRoute('update', $order), $updatePayload)
         ->assertOk()
         ->assertJsonPath('message', 'Order updated successfully.')
         ->assertJsonCount(1, 'data.lines');
 
-    $this->assertDatabaseHas('sales_order_lines', [
+    test()->assertDatabaseHas('sales_order_lines', [
         'id'          => $lineToKeepId,
         'product_qty' => 5,
         'price_unit'  => 125,
     ]);
 
-    $this->assertDatabaseMissing('sales_order_lines', ['id' => $lineToDeleteId]);
+    test()->assertDatabaseMissing('sales_order_lines', ['id' => $lineToDeleteId]);
 
     expect(OrderLine::query()->where('order_id', $order->id)->count())->toBe(1);
 });
@@ -217,33 +217,41 @@ it('forbids updating an order without permission', function () {
 
     $order = Order::factory()->create();
 
-    $this->patchJson(salesOrderRoute('update', $order), [])
+    test()->patchJson(salesOrderRoute('update', $order), [])
         ->assertForbidden();
 });
 
-it('rejects confirming orders that are not draft or sent', function (OrderState $state) {
+it('rejects confirming cancelled orders', function () {
     actingAsSalesOrderApiUser(['update_sale_order']);
 
-    $order = Order::factory()->create(['state' => $state]);
+    $order = Order::factory()->create(['state' => OrderState::CANCEL]);
 
-    $this->postJson(salesOrderRoute('confirm', $order->id))
+    test()->postJson(salesOrderRoute('confirm', $order->id))
         ->assertUnprocessable()
         ->assertJsonPath('message', 'Only draft or sent orders can be confirmed.');
-})->with([
-    'cancelled order' => [OrderState::CANCEL],
-    'sale order'      => [OrderState::SALE],
-]);
+});
+
+it('returns the original confirmed order when confirmation is replayed', function () {
+    actingAsSalesOrderApiUser(['update_sale_order']);
+
+    $order = Order::factory()->create(['state' => OrderState::SALE]);
+
+    test()->postJson(salesOrderRoute('confirm', $order->id))
+        ->assertOk()
+        ->assertJsonPath('data.id', $order->id)
+        ->assertJsonPath('data.state', OrderState::SALE->value);
+});
 
 it('soft deletes an order for authorized users', function () {
     actingAsSalesOrderApiUser(['delete_sale_order']);
 
     $order = Order::factory()->create();
 
-    $this->deleteJson(salesOrderRoute('destroy', $order))
+    test()->deleteJson(salesOrderRoute('destroy', $order))
         ->assertOk()
         ->assertJsonPath('message', 'Order deleted successfully.');
 
-    $this->assertSoftDeleted('sales_orders', ['id' => $order->id]);
+    test()->assertSoftDeleted('sales_orders', ['id' => $order->id]);
 });
 
 it('forbids deleting an order without permission', function () {
@@ -251,7 +259,7 @@ it('forbids deleting an order without permission', function () {
 
     $order = Order::factory()->create();
 
-    $this->deleteJson(salesOrderRoute('destroy', $order))
+    test()->deleteJson(salesOrderRoute('destroy', $order))
         ->assertForbidden();
 });
 
@@ -261,11 +269,11 @@ it('restores a soft deleted order for authorized users', function () {
     $order = Order::factory()->create();
     $order->delete();
 
-    $this->postJson(salesOrderRoute('restore', $order->id))
+    test()->postJson(salesOrderRoute('restore', $order->id))
         ->assertOk()
         ->assertJsonPath('message', 'Order restored successfully.');
 
-    $this->assertNotSoftDeleted('sales_orders', ['id' => $order->id]);
+    test()->assertNotSoftDeleted('sales_orders', ['id' => $order->id]);
 });
 
 it('force deletes an order for authorized users', function () {
@@ -274,11 +282,11 @@ it('force deletes an order for authorized users', function () {
     $order = Order::factory()->create();
     $order->delete();
 
-    $this->deleteJson(salesOrderRoute('force-destroy', $order->id))
+    test()->deleteJson(salesOrderRoute('force-destroy', $order->id))
         ->assertOk()
         ->assertJsonPath('message', 'Order permanently deleted.');
 
-    $this->assertDatabaseMissing('sales_orders', ['id' => $order->id]);
+    test()->assertDatabaseMissing('sales_orders', ['id' => $order->id]);
 });
 
 it('takes the order currency from the price list sent in the payload', function () {
