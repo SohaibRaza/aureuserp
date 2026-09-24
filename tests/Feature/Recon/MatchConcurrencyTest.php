@@ -8,9 +8,11 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\Process;
 use Webkul\Account\Models\BankStatement;
 use Webkul\Security\Models\User;
+use Webkul\Support\Models\Company;
 
 beforeEach(function (): void {
     TestBootstrapHelper::ensurePluginInstalled('accounts');
+    $this->company = Company::query()->firstOrFail();
     test()->actingAs(User::query()->firstOrFail());
     config(['reconciliation.financial_mutations_enabled' => true]);
     config(['reconciliation.require_company_rollout' => false]);
@@ -31,7 +33,7 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
     expect($testDatabase)->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
 
     $reconciliation = BankReconciliation::query()->create([
-        ...validBankReconciliationAttributes(),
+        ...validBankReconciliationAttributes(testBankJournal(dedicated: true)),
         'name'           => fake()->unique()->bothify('U18-CONCURRENCY-####'),
         'period_start'   => '2026-09-01',
         'period_end'     => '2026-09-30',
@@ -86,10 +88,10 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
         'creator_id'          => $creatorId,
         'date'                => '2026-09-15',
         'parent_state'        => 'posted',
-        'debit'               => '0.0000',
-        'credit'              => '125.0000',
-        'balance'             => '-125.0000',
-        'amount_residual'     => '-125.0000',
+        'debit'               => '125.0000',
+        'credit'              => '0.0000',
+        'balance'             => '125.0000',
+        'amount_residual'     => '125.0000',
         'reconciled'          => false,
         'created_at'          => now(),
         'updated_at'          => now(),
@@ -104,17 +106,17 @@ it('serializes genuine concurrent confirmations without partial or duplicate eff
         'creator_id'          => $creatorId,
         'date'                => '2026-09-15',
         'parent_state'        => 'posted',
-        'debit'               => '125.0000',
-        'credit'              => '0.0000',
-        'balance'             => '125.0000',
-        'amount_residual'     => '125.0000',
+        'debit'               => '0.0000',
+        'credit'              => '125.0000',
+        'balance'             => '-125.0000',
+        'amount_residual'     => '-125.0000',
         'reconciled'          => false,
         'created_at'          => now(),
         'updated_at'          => now(),
     ]);
 
     // Child processes need committed fixtures so they observe the same rows on
-    // genuinely independent PostgreSQL sessions. Cleanup below is explicit.
+    // genuinely independent database sessions. Cleanup below is explicit.
     while (DB::connection()->transactionLevel() > 0) {
         DB::connection()->commit();
     }
@@ -140,6 +142,8 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 config(['reconciliation.financial_mutations_enabled' => true]);
 config(['reconciliation.require_company_rollout' => false]);
 Illuminate\Support\Facades\Auth::loginUsingId($userId);
+$connection = Illuminate\Support\Facades\DB::connection();
+$sessionId = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
 touch($ready);
 $deadline = microtime(true) + 15;
 while (! file_exists($gate) && microtime(true) < $deadline) {
@@ -155,9 +159,9 @@ try {
         [$bankLineId],
         [$ledgerLineId],
     );
-    fwrite(STDOUT, json_encode(['ok' => true, 'match_id' => $match->id]));
+    fwrite(STDOUT, json_encode(['ok' => true, 'match_id' => $match->id, 'session_id' => $sessionId]));
 } catch (Throwable $error) {
-    fwrite(STDOUT, json_encode(['ok' => false, 'class' => $error::class, 'message' => $error->getMessage()]));
+    fwrite(STDOUT, json_encode(['ok' => false, 'class' => $error::class, 'message' => $error->getMessage(), 'session_id' => $sessionId]));
 }
 PHP;
 
@@ -177,7 +181,7 @@ PHP;
         ], base_path(), [
             ...$_ENV,
             'APP_ENV'                       => 'testing',
-            'DB_CONNECTION'                 => 'pgsql',
+            'DB_CONNECTION'                 => DB::connection()->getDriverName(),
             'DB_DATABASE'                   => $testDatabase,
             'AUREUSERP_TEST_REUSE_DATABASE' => '1',
         ], timeout: 45);
@@ -211,12 +215,14 @@ PHP;
         $outcomes = collect([$first, $second])->map(function (Process $process): array {
             $decoded = json_decode(trim($process->getOutput()), true);
 
-            expect($decoded)->toBeArray();
+            expect($process->getExitCode())->toBe(0)
+                ->and($decoded)->toBeArray();
 
             return $decoded;
         });
 
-        expect($outcomes->where('ok', true))->toHaveCount(1)
+        expect($outcomes->pluck('session_id')->unique())->toHaveCount(2)
+            ->and($outcomes->where('ok', true))->toHaveCount(1)
             ->and($outcomes->where('ok', false))->toHaveCount(1)
             ->and($outcomes->firstWhere('ok', false)['class'])->toBe(InvalidArgumentException::class)
             ->and($outcomes->firstWhere('ok', false)['message'])->toMatch('/already allocated|already treated/');
@@ -235,7 +241,11 @@ PHP;
                 ->count())->toBe(1)
             ->and(DB::table('accounts_partial_reconciles')->whereIn('recon_match_id', $matchIds)->count())->toBe(0)
             ->and(StatementLine::query()->findOrFail($bankLine->id)->amount_residual)->toBe('0.0000')
-            ->and(StatementLine::query()->findOrFail($bankLine->id)->is_reconciled)->toBeTrue();
+            ->and(StatementLine::query()->findOrFail($bankLine->id)->is_reconciled)->toBeTrue()
+            ->and(DB::table('recon_match_lines')->whereIn('match_id', $matchIds)->pluck('amount_applied')->all())->toBe(['125.0000', '125.0000'])
+            ->and(DB::table('accounts_account_move_lines')->where('id', $ledgerLineId)->value('amount_residual'))->toBe('125.0000')
+            ->and(DB::table('accounts_account_move_lines')->where('id', $ledgerLineId)->value('statement_line_id'))->toBe($bankLine->id)
+            ->and((string) DB::table('accounts_account_move_lines')->where('move_id', $moveId)->sum('balance'))->toBe('0.0000');
     } finally {
         foreach ([$first, $second] as $process) {
             if ($process->isRunning()) {

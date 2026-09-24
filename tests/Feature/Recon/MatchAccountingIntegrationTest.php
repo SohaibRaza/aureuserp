@@ -128,7 +128,7 @@ function u13MoveLine(BankReconciliation $reconciliation, string $balance, array 
 it('records accounting provenance and hides a fully matched ledger line from both candidate screens', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-100.0000');
+    $ledgerId = u13MoveLine($reconciliation, '100.0000');
 
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
@@ -153,7 +153,7 @@ it('records accounting provenance and hides a fully matched ledger line from bot
 it('updates both residuals on partial matches and restores them exactly on unmatch', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-100.0000');
+    $ledgerId = u13MoveLine($reconciliation, '100.0000');
 
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId], allocations: [
         'bank'   => [$bankLine->id => '60.0000'],
@@ -177,8 +177,8 @@ it('updates both residuals on partial matches and restores them exactly on unmat
 it('balances split matches across multiple ledger lines exactly', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $firstLedger = u13MoveLine($reconciliation, '-60.0000');
-    $secondLedger = u13MoveLine($reconciliation, '-40.0000');
+    $firstLedger = u13MoveLine($reconciliation, '60.0000');
+    $secondLedger = u13MoveLine($reconciliation, '40.0000');
 
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$firstLedger, $secondLedger]);
 
@@ -195,7 +195,7 @@ it('balances split matches across multiple ledger lines exactly', function (): v
 it('never exposes or modifies AR/AP residuals outside the accounting reconciler', function (): void {
     $reconciliation = u13Reconciliation();
     $receivableAccount = DB::table('accounts_accounts')->where('account_type', 'asset_receivable')->value('id');
-    $receivableLine = u13MoveLine($reconciliation, '-50.0000', ['account_id' => $receivableAccount]);
+    $receivableLine = u13MoveLine($reconciliation, '50.0000', ['account_id' => $receivableAccount]);
     $beforeResidual = (string) MoveLine::query()->withoutGlobalScopes()->find($receivableLine)->amount_residual;
 
     $bankLine = u13BankLine($reconciliation, '50.0000');
@@ -216,7 +216,7 @@ it('cannot reverse unrelated accounting reconciliations on unmatch', function ()
     expect($unrelatedPartialId)->not->toBeNull();
 
     $bankLine = u13BankLine($reconciliation, '50.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-50.0000');
+    $ledgerId = u13MoveLine($reconciliation, '50.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
     app(MatchService::class)->unmatch($match, 'Correcting the bank linkage');
 
@@ -237,27 +237,27 @@ it('rejects wrong company, currency, account, and period selections', function (
         'created_at'  => now(),
         'updated_at'  => now(),
     ]);
-    $foreignLedger = u13MoveLine($reconciliation, '-50.0000', ['company_id' => $otherCompanyId]);
+    $foreignLedger = u13MoveLine($reconciliation, '50.0000', ['company_id' => $otherCompanyId]);
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$foreignLedger]))
         ->toThrow(InvalidArgumentException::class);
 
     $otherCurrencyId = DB::table('currencies')->where('id', '<>', $reconciliation->currency_id)->value('id');
-    $foreignCurrencyLedger = u13MoveLine($reconciliation, '-50.0000', ['currency_id' => $otherCurrencyId]);
+    $foreignCurrencyLedger = u13MoveLine($reconciliation, '50.0000', ['currency_id' => $otherCurrencyId]);
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$foreignCurrencyLedger]))
         ->toThrow(InvalidArgumentException::class);
 
     $otherAccount = DB::table('accounts_accounts')->where('id', '<>', $reconciliation->liquidity_account_id)->value('id');
-    $otherAccountLedger = u13MoveLine($reconciliation, '-50.0000', ['account_id' => $otherAccount]);
+    $otherAccountLedger = u13MoveLine($reconciliation, '50.0000', ['account_id' => $otherAccount]);
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$otherAccountLedger]))
         ->toThrow(InvalidArgumentException::class);
 
-    $futureLedger = u13MoveLine($reconciliation, '-50.0000', ['date' => '2026-10-15']);
+    $futureLedger = u13MoveLine($reconciliation, '50.0000', ['date' => '2026-10-15']);
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$futureLedger]))
         ->toThrow(InvalidArgumentException::class);
 
     $otherJournalId = DB::table('accounts_journals')->where('id', '<>', $reconciliation->journal_id)->value('id');
     $foreignBank = u13BankLine($reconciliation, '50.0000', ['journal_id' => $otherJournalId]);
-    $ledgerId = u13MoveLine($reconciliation, '-50.0000');
+    $ledgerId = u13MoveLine($reconciliation, '50.0000');
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$foreignBank->id], [$ledgerId]))
         ->toThrow(InvalidArgumentException::class);
 });
@@ -265,7 +265,7 @@ it('rejects wrong company, currency, account, and period selections', function (
 it('blocks unmatch once the reconciliation is completed', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '25.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-25.0000');
+    $ledgerId = u13MoveLine($reconciliation, '25.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     $reconciliation->update(['status' => 'completed']);
@@ -277,7 +277,7 @@ it('blocks unmatch once the reconciliation is completed', function (): void {
 it('raises a safe conflict when the ledger residual was modified externally', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '70.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-70.0000');
+    $ledgerId = u13MoveLine($reconciliation, '70.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     DB::table('accounts_account_move_lines')->where('id', $ledgerId)->update(['amount_residual' => '-10.0000']);
@@ -289,7 +289,7 @@ it('raises a safe conflict when the ledger residual was modified externally', fu
 it('raises a safe conflict when this match no longer owns the ledger linkage', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '71.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-71.0000');
+    $ledgerId = u13MoveLine($reconciliation, '71.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     DB::table('accounts_account_move_lines')->where('id', $ledgerId)->update(['matching_number' => 'RB-EXTERNAL']);
@@ -300,7 +300,7 @@ it('raises a safe conflict when this match no longer owns the ledger linkage', f
 
 it('fails the second of two overlapping confirmations cleanly with no partial rows', function (): void {
     $reconciliation = u13Reconciliation();
-    $ledgerId = u13MoveLine($reconciliation, '-100.0000');
+    $ledgerId = u13MoveLine($reconciliation, '100.0000');
     $firstBank = u13BankLine($reconciliation, '60.0000');
     $secondBank = u13BankLine($reconciliation, '60.0000');
 
@@ -323,7 +323,7 @@ it('fails the second of two overlapping confirmations cleanly with no partial ro
 it('leaves no allocation behind when the basket cannot balance', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-40.0000');
+    $ledgerId = u13MoveLine($reconciliation, '40.0000');
     $matchesBefore = ReconMatch::query()->where('reconciliation_id', $reconciliation->id)->count();
 
     expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]))
@@ -336,8 +336,8 @@ it('leaves no allocation behind when the basket cannot balance', function (): vo
 it('consumes a bank line across partial matches exactly once', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $firstLedger = u13MoveLine($reconciliation, '-40.0000');
-    $secondLedger = u13MoveLine($reconciliation, '-60.0000');
+    $firstLedger = u13MoveLine($reconciliation, '40.0000');
+    $secondLedger = u13MoveLine($reconciliation, '60.0000');
 
     app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$firstLedger], allocations: [
         'bank' => [$bankLine->id => '40.0000'], 'ledger' => [$firstLedger => '40.0000'],
@@ -358,7 +358,7 @@ it('consumes a bank line across partial matches exactly once', function (): void
 it('treats repeated confirmations and unmatches as idempotent', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '33.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-33.0000');
+    $ledgerId = u13MoveLine($reconciliation, '33.0000');
 
     $proposalKey = 'u13-proposal-'.fake()->unique()->bothify('####');
     $proposed = app(MatchService::class)->proposeMatch($reconciliation, [$bankLine->id], [$ledgerId], idempotencyKey: $proposalKey);
@@ -374,7 +374,7 @@ it('treats repeated confirmations and unmatches as idempotent', function (): voi
         ->and(PartialReconcile::query()->where('recon_match_id', $confirmed->id)->exists())->toBeFalse();
 
     $secondBank = u13BankLine($reconciliation, '21.0000');
-    $secondLedger = u13MoveLine($reconciliation, '-21.0000');
+    $secondLedger = u13MoveLine($reconciliation, '21.0000');
     $key = 'u13-idempotent-'.fake()->unique()->bothify('####');
     $first = app(MatchService::class)->createMatch($reconciliation, [$secondBank->id], [$secondLedger], idempotencyKey: $key);
     $retry = app(MatchService::class)->createMatch($reconciliation, [$secondBank->id], [$secondLedger], idempotencyKey: $key);
@@ -389,7 +389,7 @@ it('treats repeated confirmations and unmatches as idempotent', function (): voi
 it('preserves confirmation and reversal history in the audit trail', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '44.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-44.0000');
+    $ledgerId = u13MoveLine($reconciliation, '44.0000');
 
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
     app(MatchService::class)->unmatch($match->refresh(), 'Correcting an incorrect match');
@@ -427,11 +427,11 @@ it('uses transaction-currency residuals for a foreign-currency bank account', fu
     $reconciliation->update(['currency_id' => $foreignCurrencyId]);
 
     $bankLine = u13BankLine($reconciliation->refresh(), '100.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-28000.0000', [
+    $ledgerId = u13MoveLine($reconciliation, '28000.0000', [
         'currency_id'              => $foreignCurrencyId,
         'company_currency_id'      => $reconciliation->company->currency_id,
-        'amount_currency'          => '-100.0000',
-        'amount_residual_currency' => '-100.0000',
+        'amount_currency'          => '100.0000',
+        'amount_residual_currency' => '100.0000',
     ]);
 
     $match = app(MatchService::class)->createMatch($reconciliation->refresh(), [$bankLine->id], [$ledgerId]);
@@ -445,7 +445,7 @@ it('rejects a real variance at four-decimal currency precision', function (): vo
     $reconciliation = u13Reconciliation();
     DB::table('currencies')->where('id', $reconciliation->currency_id)->update(['decimal_places' => 4, 'rounding' => 0.0001]);
     $bankLine = u13BankLine($reconciliation, '100.0001');
-    $ledgerId = u13MoveLine($reconciliation, '-100.0000');
+    $ledgerId = u13MoveLine($reconciliation, '100.0000');
 
     expect(fn () => app(MatchService::class)->createMatch($reconciliation->refresh(), [$bankLine->id], [$ledgerId]))
         ->toThrow(InvalidArgumentException::class, 'not balanced');
@@ -454,7 +454,7 @@ it('rejects a real variance at four-decimal currency precision', function (): vo
 it('does not overwrite existing accounting matching provenance', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '75.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-75.0000', ['matching_number' => 'P123']);
+    $ledgerId = u13MoveLine($reconciliation, '75.0000', ['matching_number' => 'P123']);
 
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
     $ledger = MoveLine::query()->withoutGlobalScopes()->findOrFail($ledgerId);
@@ -467,7 +467,7 @@ it('does not overwrite existing accounting matching provenance', function (): vo
 it('binds an idempotency key to allocations and match intent', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '100.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-100.0000');
+    $ledgerId = u13MoveLine($reconciliation, '100.0000');
     $key = 'u13-command-'.fake()->unique()->bothify('####');
 
     app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId], notes: 'First instruction', allocations: [
@@ -486,7 +486,7 @@ it('binds an idempotency key to allocations and match intent', function (): void
 it('requires and preserves a meaningful reversal reason', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '25.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-25.0000');
+    $ledgerId = u13MoveLine($reconciliation, '25.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     expect(fn () => app(MatchService::class)->unmatch($match->refresh(), ''))
@@ -499,7 +499,7 @@ it('requires and preserves a meaningful reversal reason', function (): void {
 it('rejects direct application of effects outside the create or confirm command', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '31.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-31.0000');
+    $ledgerId = u13MoveLine($reconciliation, '31.0000');
     $proposal = app(MatchService::class)->proposeMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     expect(fn () => app(MatchService::class)->applyMatchEffects($proposal))
@@ -520,7 +520,7 @@ it('preserves pre-existing accounting partials and their matching provenance', f
         ->and((string) $debitBefore->amount_residual)->toBe('50.0000')
         ->and($debitBefore->matching_number)->not->toBeNull();
 
-    $bankLine = u13BankLine($reconciliation, '-50.0000');
+    $bankLine = u13BankLine($reconciliation, '50.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$debitId]);
 
     $debitMatched = MoveLine::query()->withoutGlobalScopes()->findOrFail($debitId);
@@ -538,7 +538,7 @@ it('preserves pre-existing accounting partials and their matching provenance', f
 it('refuses to unlink a ledger line whose match-owned linkage was changed', function (): void {
     $reconciliation = u13Reconciliation();
     $bankLine = u13BankLine($reconciliation, '46.0000');
-    $ledgerId = u13MoveLine($reconciliation, '-46.0000');
+    $ledgerId = u13MoveLine($reconciliation, '46.0000');
     $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
 
     DB::table('accounts_account_move_lines')->where('id', $ledgerId)->update([
@@ -548,4 +548,29 @@ it('refuses to unlink a ledger line whose match-owned linkage was changed', func
     expect(fn () => app(MatchService::class)->unmatch($match->refresh(), 'Correcting a linkage changed by another workflow'))
         ->toThrow(InvalidArgumentException::class, 'outside this match')
         ->and($match->refresh()->status)->toBe('confirmed');
+});
+
+it('clears same-direction receipts and payments without changing the posted ledger', function (string $amount): void {
+    $reconciliation = u13Reconciliation();
+    $bankLine = u13BankLine($reconciliation, $amount);
+    $ledgerId = u13MoveLine($reconciliation, $amount);
+
+    $match = app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]);
+
+    expect($bankLine->refresh()->amount_residual)->toBe('0.0000')
+        ->and($match->lines()->pluck('amount_applied')->all())->toBe([$amount, $amount])
+        ->and((string) MoveLine::query()->withoutGlobalScopes()->findOrFail($ledgerId)->balance)->toBe($amount)
+        ->and((string) MoveLine::query()->withoutGlobalScopes()->findOrFail($ledgerId)->amount_residual)->toBe($amount)
+        ->and(PartialReconcile::query()->where('recon_match_id', $match->id)->exists())->toBeFalse();
+})->with(['receipt' => '125.0000', 'payment' => '-125.0000']);
+
+it('rejects an opposite-direction bank and liquidity entry without an allocation', function (): void {
+    $reconciliation = u13Reconciliation();
+    $bankLine = u13BankLine($reconciliation, '125.0000');
+    $ledgerId = u13MoveLine($reconciliation, '-125.0000');
+
+    expect(fn () => app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$ledgerId]))
+        ->toThrow(InvalidArgumentException::class, 'same direction')
+        ->and($reconciliation->matches()->count())->toBe(0)
+        ->and($bankLine->refresh()->amount_residual)->toBe('125.0000');
 });

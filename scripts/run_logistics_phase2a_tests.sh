@@ -143,6 +143,10 @@ export APP_DEBUG=false
 export APP_KEY='base64:YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE='
 export APP_URL='http://localhost'
 export DB_CONNECTION=pgsql
+export AUREUSERP_TEST_REUSE_DATABASE=0
+export TEST_TOKEN=
+export DB_URL=
+export DB_SOCKET=
 export DB_HOST="${SOCKET_ROOT}"
 export DB_PORT="${DATABASE_PORT}"
 export DB_DATABASE="${DATABASE}"
@@ -165,6 +169,7 @@ export LOG_CHANNEL=null
 export MSG91_AUTH_KEY=''
 export MSG91_ADMIN_MOBILE=''
 export AUREUSERP_RUN_SALES_CONFIRMATION_CONCURRENCY=1
+export AUREUSERP_RUN_CONCURRENCY_TEST=1
 
 mkdir -p "${TASK_ROOT}/cache"
 

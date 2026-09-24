@@ -206,7 +206,7 @@ it('proves partial 60 + remaining 40 and split 60 + 40 allocations without inven
     $partialRecon = goldenRecon('100.0000');
     goldenStatement($partialRecon);
     $bank = goldenStatementLine($partialRecon->refresh(), '100.0000', 'partial-bank-100');
-    $ledger = goldenBookEntry($partialRecon, '2026-09-15', '-100.0000', 'Book payment 100');
+    $ledger = goldenBookEntry($partialRecon, '2026-09-15', '100.0000', 'Book receipt 100');
     $partial = app(MatchService::class)->createMatch($partialRecon->refresh(), [$bank->id], [$ledger], allocations: [
         'bank' => [$bank->id => '60.0000'], 'ledger' => [$ledger => '60.0000'],
     ]);
@@ -218,13 +218,13 @@ it('proves partial 60 + remaining 40 and split 60 + 40 allocations without inven
     $splitRecon = goldenRecon('100.0000');
     goldenStatement($splitRecon);
     $splitBank = goldenStatementLine($splitRecon->refresh(), '100.0000', 'split-bank-100');
-    $first = goldenBookEntry($splitRecon, '2026-09-16', '-60.0000', 'Invoice allocation 60');
-    $second = goldenBookEntry($splitRecon, '2026-09-16', '-40.0000', 'Invoice allocation 40');
+    $first = goldenBookEntry($splitRecon, '2026-09-16', '60.0000', 'Invoice allocation 60');
+    $second = goldenBookEntry($splitRecon, '2026-09-16', '40.0000', 'Invoice allocation 40');
     $split = app(MatchService::class)->createMatch($splitRecon->refresh(), [$splitBank->id], [$first, $second]);
 
     expect($split->amount)->toBe('100.0000')
         ->and($splitBank->refresh()->amount_residual)->toBe('0.0000')
         ->and($splitBank->is_reconciled)->toBeTrue()
         ->and((string) DB::table('recon_match_lines')->where('match_id', $split->id)->where('side', 'bank')->sum('amount_applied'))->toBe('100.0000')
-        ->and((string) DB::table('recon_match_lines')->where('match_id', $split->id)->where('side', 'ledger')->sum('amount_applied'))->toBe('-100.0000');
+        ->and((string) DB::table('recon_match_lines')->where('match_id', $split->id)->where('side', 'ledger')->sum('amount_applied'))->toBe('100.0000');
 });

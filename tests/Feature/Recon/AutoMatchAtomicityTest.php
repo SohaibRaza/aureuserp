@@ -117,7 +117,7 @@ function atomicMoveLine(BankReconciliation $reconciliation, string $balance): in
 it('applies the financial safety gate even when automatic matching only creates proposals', function (): void {
     $reconciliation = atomicMatchingReconciliation();
     atomicStatementLine($reconciliation, '100.0000');
-    atomicMoveLine($reconciliation, '-100.0000');
+    atomicMoveLine($reconciliation, '100.0000');
     config(['reconciliation.financial_mutations_enabled' => false]);
 
     expect(fn () => app(MatchingEngine::class)->autoMatch($reconciliation, confirmStrong: false))
@@ -129,7 +129,7 @@ it('applies the financial safety gate even when automatic matching only creates 
 it('rejects automatic matching in every non-editable lifecycle state without partial effects', function (string $status): void {
     $reconciliation = atomicMatchingReconciliation();
     atomicStatementLine($reconciliation, '100.0000');
-    atomicMoveLine($reconciliation, '-100.0000');
+    atomicMoveLine($reconciliation, '100.0000');
     $reconciliation->update(['status' => $status]);
 
     expect(fn () => app(MatchingEngine::class)->autoMatch($reconciliation->refresh(), confirmStrong: false))
@@ -141,9 +141,9 @@ it('rejects automatic matching in every non-editable lifecycle state without par
 it('rolls back every proposal, allocation, and event when a later automatic match fails', function (): void {
     $reconciliation = atomicMatchingReconciliation();
     atomicStatementLine($reconciliation, '100.0000');
-    atomicMoveLine($reconciliation, '-100.0000');
+    atomicMoveLine($reconciliation, '100.0000');
     atomicStatementLine($reconciliation, '200.0000');
-    atomicMoveLine($reconciliation, '-200.0000');
+    atomicMoveLine($reconciliation, '200.0000');
 
     $real = app(MatchService::class);
     $failing = new class($real) extends MatchService
@@ -174,9 +174,9 @@ it('rolls back every proposal, allocation, and event when a later automatic matc
 it('commits all proposals and their audit evidence together on the successful path', function (): void {
     $reconciliation = atomicMatchingReconciliation();
     atomicStatementLine($reconciliation, '100.0000');
-    atomicMoveLine($reconciliation, '-100.0000');
+    atomicMoveLine($reconciliation, '100.0000');
     atomicStatementLine($reconciliation, '200.0000');
-    atomicMoveLine($reconciliation, '-200.0000');
+    atomicMoveLine($reconciliation, '200.0000');
 
     $stats = app(MatchingEngine::class)->autoMatch($reconciliation, confirmStrong: false);
 

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\DB;
+use Webkul\Account\Models\Account;
 use Webkul\Account\Models\Journal;
 
 function validBankReconciliationAttributes(?Journal $journal = null): array
@@ -20,7 +21,7 @@ function validBankReconciliationAttributes(?Journal $journal = null): array
     ];
 }
 
-function testBankJournal(): Journal
+function testBankJournal(bool $dedicated = false): Journal
 {
     $bankId = DB::table('banks')->insertGetId([
         'name'       => 'Test Bank',
@@ -46,7 +47,22 @@ function testBankJournal(): Journal
     ]);
 
     $journal = Journal::query()->where('type', 'bank')->firstOrFail();
-    $journal->update(['bank_account_id' => $bankAccountId]);
+    if ($dedicated) {
+        $account = Account::query()->withoutGlobalScopes()->findOrFail($journal->default_account_id)->replicate();
+        $account->forceFill([
+            'name' => 'Isolated concurrency bank',
+            'code' => fake()->unique()->bothify('CON-########'),
+        ])->save();
+        $account->companies()->sync([test()->company->id]);
+        $journal = $journal->replicate();
+        $journal->forceFill([
+            'name'               => 'Isolated concurrency journal',
+            'code'               => fake()->unique()->bothify('C####'),
+            'sort'               => fake()->unique()->bothify('C####'),
+            'default_account_id' => $account->id,
+        ]);
+    }
+    $journal->forceFill(['bank_account_id' => $bankAccountId])->save();
 
     return $journal->refresh();
 }
