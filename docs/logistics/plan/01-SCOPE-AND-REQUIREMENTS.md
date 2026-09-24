@@ -55,6 +55,22 @@ A person may hold several roles only where Q2 permits it. The role names remain 
 - R14. Product, lot/serial requirement, package, owner, quality status, storage identity, and outer dimensions/weight retain their distinct meanings.
 - R15. Capacity evaluates actual equipment and each relevant segment independently for weight, volume, handling, lot and quality restrictions, and known prohibitions. A missing measurement is unknown; the system must not replace it with zero or use it as evidence that the load fits.
 
+### Factory requirements and projected production
+
+See the [proposed stock-readiness workflow](03-WORKFLOWS-AND-LIFECYCLES.md#stock-readiness-before-loading-proposed-target-for-review) for calculation boundaries, recovery behavior, implementation tasks and the five remaining policy choices. Its proposed policy is not approved merely by inclusion in this pack.
+
+The [factory stock-planning workbook](../FACTORY-STOCK-PLANNING-WORKBOOK-REVIEW.md) demonstrates the need to assess whether demand can be loaded at the required location and time, identify shortages, and evaluate recovery options. It describes the current manual process, not an approved target workflow. These business needs supplement R9 and R11–R15.
+
+The target must compare demand with usable supply at the relevant location and deadline. The workbook's `physical stock + projected production − Requirement` is a useful description of its current calculation, but is insufficient as a dispatch-readiness rule: reservations, quality holds, production completion times and transfer lead times matter. Show shortage quantities and accessible status indicators. Spreadsheet layouts, column names, a fixed two-factory structure, factory-wide machine-hour inputs and manual order selection are not mandatory software design choices.
+
+The planning view must distinguish physical stock, quantities reserved or unavailable for quality reasons, projected production, and proposed inbound transfers. Record the observation time, production assumptions and loading deadline. Projected production does not create Inventory stock, a reservation, or permission to release goods. Imports must identify source lines and revisions so repeated imports cannot double requirements, and products and packaging must be matched by identifiers rather than spreadsheet positions.
+
+Show local shortages alongside the cross-factory comparison. A combined surplus does not establish timely availability at the loading factory. Staff must record the selected production or vehicle action; shortages must not automatically cancel bookings. Changes to quantities or loading factory require affected plans and approvals to be rechecked. Rate units, planning-period eligibility, factory-to-Company mapping and permitted cross-factory recovery remain open in the linked evidence review; detailed contracts must resolve them before implementation.
+
+Requirement membership must be explainable and reproducible: identify included source-line quantities, loading location, applicable time scope, selection rule or authorized planner action, and revision. Approved rules may derive the set automatically; manual selection is not mandatory. Spreadsheet position and `Seq` must not determine membership or serve as source-order identity. The precise planning-window and selection rules remain open; do not assume vehicle confirmation is necessary for tentative production planning. Existing commercial eligibility and Inventory validations still govern active claims and release.
+
+The workbook records transfer arrangements and vehicles assigned to both factories. Support a recorded case-by-case recovery decision without an automatic transfer-first rule. Dual-factory collection must preserve each site's loading and departure checks, account for cargo already aboard, and split source quantities without duplication. Proposed transfers must remain distinct from completed Inventory movements. Complete reassignment to another loading factory and recovery approval thresholds require business confirmation.
+
 ### Transport planning and execution
 
 - R16. The first live pilot must support dedicated vehicles, multi-stop delivery, carrier consignments with applicable feeder, terminal and final-mile handovers, and distributor pickup. Each mode requires an approved responsibility matrix and acceptance evidence before the pilot starts.

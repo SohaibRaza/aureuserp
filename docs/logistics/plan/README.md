@@ -21,6 +21,10 @@ When sources conflict, resolve them in this order:
 
 Recommendations and examples from either source pack are not company policy unless adopted here or recorded as an approved decision. Existing code is reused only where it preserves the required invariants. A conflict with the target behavior creates refactoring work; it does not weaken the target behavior.
 
+Current manual practice is evidence of business needs, constraints and exceptions; it is not automatically a requirement to preserve the same workflow. Evaluate spreadsheet steps and workarounds critically. The target may simplify, automate or replace them while preserving validated business outcomes and necessary controls. The same principle applies to existing AureusERP behavior.
+
+PostgreSQL is the project database baseline under [ADR 0007](../../adr/0007-postgresql-project-baseline.md). Use it for migration, transaction, concurrency and release acceptance; other-engine compatibility is not an implicit requirement.
+
 ## Terms used throughout the plan
 
 - **Exact Company:** The legal or operating Company record that owns the source transaction and resulting stock, financial, transport, and evidence records. A child Company used as a branch is still a distinct Company for authorization and data isolation.
@@ -59,7 +63,7 @@ The first live pilot includes all four required transport modes. Each mode still
 - goods-transporter consignments, including applicable feeder, terminal, and final-mile handovers;
 - distributor-arranged pickup.
 
-Implementation proceeds in small dependency-ordered increments. Completion of one increment does not authorize a narrower live pilot.
+Implementation proceeds in small dependency-ordered increments, prioritizing dedicated vehicles and multi-stop delivery before carrier consignments and distributor pickup. The [roadmap priority](08-IMPLEMENTATION-ROADMAP.md#current-implementation-priority) changes engineering order, not the approved all-four-mode live pilot gate. Completion of one increment does not authorize a narrower live pilot.
 
 ## Document map
 
@@ -89,6 +93,8 @@ Implementation proceeds in small dependency-ordered increments. Completion of on
 
 ## Implementation order
 
+The [stock-readiness target proposal](03-WORKFLOWS-AND-LIFECYCLES.md#stock-readiness-before-loading-proposed-target-for-review) extends F1 with explicit demand, available-stock, future-production and deadline rules. Review its five choices in Q1/Q2/Q3/Q4/Q6 before implementing affected behavior. The [four-mode tabletop review](../P0-TRANSPORT-MODE-TABLETOP-2026-09-24.md) records design scenarios and missing operational evidence; it is not operational signoff.
+
 ```mermaid
 flowchart TB
   P0[P0 Baseline and governance] --> P1A[P1A Inventory integrity]
@@ -106,7 +112,7 @@ flowchart TB
   P7 --> P8[P8 All-mode pilot]
 ```
 
-P0 and approved discovery work may start immediately. A phase may start only after its blocking decisions and predecessor acceptance criteria are satisfied. The live pilot requires all P0-P7 gates; no mode is enabled merely to satisfy a schedule.
+P0 and approved discovery work may start immediately. Dependent Logistics features may start only after their blocking decisions and predecessor acceptance criteria are satisfied. The owner has authorized bounded Inventory and Accounts integrity repairs to proceed while unrelated P0 operational evidence is collected, provided the specific task has an isolated baseline, a reproduced defect or failing test, and no unresolved business-policy dependency. This exception does not close P0 or waive PostgreSQL acceptance. The live pilot requires all P0-P7 gates; no mode is enabled merely to satisfy a schedule.
 
 ## Global stop conditions
 

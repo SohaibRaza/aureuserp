@@ -43,7 +43,7 @@ These families define required persisted meaning. Physical tables may combine cl
 4. Bounded backfill: use stable primary-key windows, resumable checkpoints and row counts/hashes; do not hold operational locks for a full historical table.
 5. Dual-read only when necessary and time-bounded; name the retirement criterion. Avoid dual-write unless both writes share one transaction and invariant.
 6. Forward correction over history rewrite: opening/adoption records reference existing native effects and physical position.
-7. Cross-engine design: PostgreSQL and supported MySQL get equivalent business guarantees even when syntax differs.
+7. PostgreSQL is the project database baseline under [ADR 0007](../../adr/0007-postgresql-project-baseline.md). Prove identity, constraints and transaction behavior on the recorded PostgreSQL version; other engines are not acceptance targets.
 8. Rollback preserves facts: code rollback may disable new commands, but migrations containing actual business history are not destructively rolled back.
 
 ## Required physical schema specification
@@ -53,7 +53,7 @@ The persistence families above define business meaning; they are not permission 
 - exact table and model names, owning module and business purpose;
 - every column's database type, precision, nullability, default and whether it is mutable after use;
 - foreign keys, deletion behavior and the treatment of parent or source removal;
-- unique, check and lookup indexes, with equivalent PostgreSQL and supported MySQL behavior;
+- unique, check and lookup indexes, with verified PostgreSQL behavior;
 - the records and transitions that require transaction locks;
 - legacy classification, backfill source, checkpoint and reconciliation totals;
 - compatible application versions for expand, activate and contract steps; and
@@ -76,7 +76,7 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 
 ### M2A. Inventory owner integrity
 
-- Add Inventory constraints/indexes only after Q3 identity decision and clean preflight.
+- Add Inventory constraints/indexes only after Q3 identity decision and clean preflight. The local six-column balance-identity implementation uses PostgreSQL `UNIQUE NULLS NOT DISTINCT` and therefore requires PostgreSQL 15 or newer; verify the deployment version and duplicates before applying it. See the [integrity evidence and migration conditions](../P0-EXECUTION-REPORT-2026-09-24.md#continued-inventory-and-accounts-integrity-work--2026-09-24).
 - Deploy compatible owner services before activating constraints that old writers cannot satisfy.
 
 ### M2B. Accounts owner integrity
@@ -113,7 +113,7 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 
 - During P6, add only the endpoint, segment, collector, consignment and handover associations required by the approved rules for responsibilities in all four transport modes.
 - Reuse DM1, DM4, DM8 and DM15 identities. Do not introduce a second cargo, trip or consignment balance for a transport mode.
-- Activate each association through the same physical schema review, both-engine checks and expand/verify/activate/contract checkpoint used by earlier phases.
+- Activate each association through the same physical schema review, PostgreSQL checks and expand/verify/activate/contract checkpoint used by earlier phases.
 
 ### M6. Opening adoption
 
@@ -124,27 +124,27 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 
 ### Per-phase activation and cleanup
 
-Each phase uses an explicit expand, verify, activate and contract checkpoint. Enforce that phase's additive constraints only after compatible application code, data preflight and both-engine checks pass. Record the switch that disables old writers and the rollback or forward-recovery response before activation. Remove compatibility reads only after telemetry and row classification prove that no supported writer or record requires them. Retain audit and mapping data needed to explain historical results.
+Each phase uses an explicit expand, verify, activate and contract checkpoint. Enforce that phase's additive constraints only after compatible application code, data preflight and PostgreSQL checks pass. Record the switch that disables old writers and the rollback or forward-recovery response before activation. Remove compatibility reads only after telemetry and row classification prove that no supported writer or record requires them. Retain audit and mapping data needed to explain historical results.
 
 ## Migration-to-phase map
 
 | Migration work | Phase | Required evidence before activation |
 | --- | --- | --- |
 | M1A nonproduction characterization | P0 | Reproducible reports, sanitized fixtures and explained findings. |
-| M2A Inventory integrity | P1A | Q3 approval, duplicate preflight, caller map and PostgreSQL/MySQL concurrency proof. |
+| M2A Inventory integrity | P1A | Q3 approval, duplicate preflight, caller map and PostgreSQL concurrency proof. |
 | M2B Accounts integrity | P1B | Q5 approval, corrected reconciliation fixtures and native effect/reversal proof. |
 | M3A controls and evidence | P2 | Q2/Q7/Q9 decisions, evidence failure tests and suspension race proof. |
 | M2C plus M3B planning/loading | P3 | Q1/Q4/Q6 decisions, physical schema specification and source-lineage proof. |
 | M4 execution/reconciliation | P4 | P3 acceptance, Q10 decision, Inventory transaction and correction proof. |
 | M5A freight linkage | P5 | P4 and P1B acceptance, Q5/Q6 decisions and accounting reconciliation proof. |
-| M5B mode and handover associations | P6 | Signed mode matrix, reviewed physical schema, both-engine checks and forward-recovery checkpoint. |
+| M5B mode and handover associations | P6 | Signed mode matrix, reviewed physical schema, PostgreSQL checks and forward-recovery checkpoint. |
 | M1B plus M6 opening rehearsal | P7 | Authorized read-only cohort extract, repeatable dry-run mappings, restore test and provisional reconciliation totals. |
 | M6 final opening adoption | P8 cutover | Approved cutoff and batch identity, fenced cohort commands, late-change delta, final reconciliation and zero-effect rerun. |
 
 ## Rollback and recovery
 
 - Before live activation, database backup and protected evidence snapshot must share a recoverable point or documented reconciliation procedure.
-- Migration steps document statement boundaries and postconditions per engine. After any DDL failure, keep affected capabilities disabled, inspect actual schema state, and resume only through verified forward steps; never assume a multi-statement MySQL migration rolled back atomically.
+- Migration steps document PostgreSQL transaction boundaries and postconditions. After any DDL failure, keep affected capabilities disabled, inspect actual schema and migration-ledger state, and resume only through verified forward steps. Do not assume steps outside the failed transaction were rolled back.
 - A failed backfill resumes from a verified checkpoint and never assumes a row failed merely because the client lost its response.
 - A restored older backup fences release/payment/external workers until post-backup outcomes are reconciled.
 
@@ -153,5 +153,5 @@ Each phase uses an explicit expand, verify, activate and contract checkpoint. En
 - Preflight counts are explained and approved; no silent repair occurred.
 - Repeated backfill/adoption produces the same mapping and no duplicate effects.
 - Native and Logistics totals reconcile by company and source identity.
-- Both database engines enforce equivalent identity and aggregate behavior.
+- PostgreSQL enforces the approved identity and aggregate behavior.
 - Code rollback cannot erase evidence history or approved-disposal tombstones, physical history, or native financial and stock facts.

@@ -9,7 +9,7 @@ execution: code
 
 ## Execution rules
 
-The phases below are the authoritative implementation and approval sequence. Units U1-U20 are bounded implementation slices governed by their complete parent-phase contract. A phase cannot exit on documentation or mocked-model results alone. Work may overlap only where dependencies and decision gates permit it.
+The phases below are the authoritative implementation and approval sequence. Units U1-U20 are bounded implementation slices governed by their complete parent-phase contract. A phase cannot exit on documentation or mocked-model results alone. Work may overlap only where dependencies and decision gates permit it. The owner has authorized bounded Inventory and Accounts integrity repairs alongside remaining P0 evidence work. Such a repair needs an isolated baseline, a reproduced defect or failing test, and no unresolved business-policy dependency. It cannot activate dependent Logistics execution features or waive PostgreSQL acceptance.
 
 ```mermaid
 flowchart TB
@@ -27,6 +27,12 @@ flowchart TB
   P6 --> P7[P7 Cutover recovery and support]
   P7 --> P8[P8 All-mode live pilot]
 ```
+
+## Current implementation priority
+
+Implement and validate dedicated vehicles and multi-stop delivery first, after the shared Inventory, Accounts and Logistics-control prerequisites for the affected work pass. Build their planning, loading, release, receipt, exception and applicable freight journeys before mode-specific carrier consignment and distributor-pickup extensions. Reuse the common shipment, cargo and release contracts; priority does not permit dedicated-vehicle assumptions to be hard-coded into shared models.
+
+Carrier consignments and distributor pickup remain in scope as later implementation priorities. This ordering does not narrow the first live pilot: the settled all-four-mode activation gate remains until the owner explicitly approves a replacement. Continue collecting missing operational evidence incrementally; do not represent a completed engineering slice as approval for live use.
 
 ## Unit registry
 
@@ -93,7 +99,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Business rules:** Reported behavior is not reproduced behavior. Existing code does not approve business policy.
 - **Validations:** Destructive bootstrap requires positive test-environment identity; external communications are disabled or intercepted.
 - **Permissions:** Verify exact-company control and removal authority, including parent/child negatives.
-- **Integration points:** Test runner, PostgreSQL and supported MySQL disposable targets, storage and notification fakes.
+- **Integration points:** Test runner, PostgreSQL disposable targets, storage and notification fakes.
 - **Tests:** Run automated isolation, cleanup-boundary, foundation, control, removal and current reconciliation-fixture tests. Separately perform read-only source and caller inspection plus facilitated paper and basic-phone walkthroughs for every transport mode and representative exception. Walkthrough results are operational evidence, not application-test results.
 - **Acceptance:** Exact commands/results, engine/version, revision plus local-diff identity, caller map, lock map, decision owner/evidence register, and explained baseline failures; business owners approve vocabulary, responsibilities, documents and exception handoffs before related schemas freeze.
 - **Migration/refactoring:** None. Convert reproduced defects into bounded P1 tasks; do not weaken assertions.
@@ -111,7 +117,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Validations:** Exact company/source membership, finite positive quantity, approved identity dimensions, state/revision, return availability, quality/lot.
 - **Permissions:** Existing native authority plus service-level exact-company checks; correction requires scoped authority.
 - **Integration points:** Logistics enrollment listener later in U9/U11; ordinary unenrolled callers remain compatible.
-- **Tests:** Missing-quant race; 60+60 vs 100; complete-vs-cancel; two-operation rollback; subset/backorder; omitted/invalid return maps; cumulative returns; outer rollback; PostgreSQL/MySQL independent workers.
+- **Tests:** Missing-quant race; 60+60 vs 100; complete-vs-cancel; two-operation rollback; subset/backorder; omitted/invalid return maps; cumulative returns; outer rollback; PostgreSQL independent workers.
 - **Acceptance:** Every relevant native writer invokes the transactional precondition hook and rejects a denying test guard; commands produce one coherent terminal/native result, onsite restoration is proven, and unenrolled behavior does not regress. U9/P3 proves the real enrollment listener for claimed cargo; U11/P4 proves frozen-release protection through the same callers.
 - **Migration/refactoring:** Preflight then forward constraint; never auto-merge historical stock rows; refactor direct writers to owner services.
 - **Out of scope:** Trips, receiving, freight, ERP-wide decimal rewrite.
@@ -128,7 +134,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Validations:** Company, currency, journal, method, bank destination, recipient authority, amount and residual under lock.
 - **Permissions:** Separate approve obligation, change recipient, instruct payment, confirm/reconcile and reverse authorities.
 - **Integration points:** Manual/external payout remains pending until reconciled; no bank API assumed.
-- **Tests:** Correct Recon fixtures; pre-bill apply-once; 60+60 payment race; lost response; late failure; separate supplier/recipient; distributor-paid freight; reversal; both engines.
+- **Tests:** Correct Recon fixtures; pre-bill apply-once; 60+60 payment race; lost response; late failure; separate supplier/recipient; distributor-paid freight; reversal; PostgreSQL.
 - **Acceptance:** Native entries, reconciliation, residual, recipient and reversal explain every effect without duplicate authority.
 - **Migration/refactoring:** Fix fixtures before production behavior; additive owner migration and existing-record linkage.
 - **Out of scope:** New general ledger, fake final bill, generic payment provider integration.
@@ -151,6 +157,8 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Out of scope:** Generic workflow/event store, public evidence URLs, operational posting.
 
 ## P3. Commercial quantity, demand, booking, and loading
+
+The proposed [stock-readiness subdivisions of U9/U10/U17](03-WORKFLOWS-AND-LIFECYCLES.md#bounded-implementation-sequence) cover demand selection, current-stock assessment, expected production and shortage recovery. The five related policy choices remain open; current workbook formulas and manual selections do not approve their target behavior. Detailed readiness service tasks must retain this phase's Inventory, control and decision prerequisites; U17 supplies the later operational workspace.
 
 - **Objective:** Preserve historical quantity meaning and produce a verified executable load without shadow inventory.
 - **Scope:** U6, U9, U10.
@@ -203,6 +211,8 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 
 ## P6. All transport modes and operator experience
 
+Complete U17/U18 first for dedicated vehicles and multi-stop delivery, then add and qualify carrier consignments and distributor pickup. P6 exit and P8 activation still require all four modes under the current approved pilot scope.
+
 - **Objective:** Complete all mandatory modes through shared controls and usable role workspaces/documents.
 - **Scope:** U17-U18.
 - **Affected modules:** trip/stop/release/consignment/pickup services, Logistics Filament pages/resources, query services, views and language files.
@@ -215,7 +225,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Integration points:** Native services plus internal assisted phone workflow; no portal dependency.
 - **Tests:** Normal and failure/recovery journey for dedicated, multi-stop, carrier and pickup; provider replacement; collector mismatch; document/reprint; cross-company export; keyboard/call-only role play; paper-fallback exercise.
 - **Acceptance:** Every mode completes loading, release, custody, receipt, freight where applicable, correction and recovery; every named primary and backup completes role training and competency signoff and accepts workload.
-- **Migration/refactoring:** M5B adds only the approved endpoint, segment, collector, consignment and handover associations through the reviewed both-engine activation checkpoint; document templates are versioned with their governing decisions.
+- **Migration/refactoring:** M5B adds only the approved endpoint, segment, collector, consignment and handover associations through the reviewed PostgreSQL activation checkpoint; document templates are versioned with their governing decisions.
 - **Out of scope:** Driver app, GPS, route optimization, full carrier network simulation.
 
 ## P7. Cutover, outage, restore, observability, and support

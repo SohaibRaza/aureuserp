@@ -109,6 +109,11 @@ Accounts must support an approved pre-bill advance purpose, later supplier-docum
 
 Primary surfaces: `plugins/webkul/accounts/src/Services/PaymentRegistrar.php`, `plugins/webkul/accounts/src/Services/Reconciler.php`, `plugins/webkul/accounts/src/Services/MoveWorkflow.php`, payment models/requests and native UI/API callers.
 
+**Current native implementation boundary (2026-09-24):** Invoice, bill, credit-note and refund pay APIs accept `idempotency_key` in the validated request body. It contains 1–128 ASCII letters, digits, dots, colons, underscores or hyphens, beginning with a letter or digit. The key is scoped to the exact company. Logistics callers must supply it and preserve the same significant request fields for every retry; omission remains backward-compatible for native callers but gives no cross-request replay guarantee. Responses include canonical `payment_ids`. Changed intent rejects, and replay rechecks payment-create permission and active-company access. Native APIs also retain their existing document-update permission checks. The Filament payment form supplies its own stable key.
+
+Registration and result persistence are atomic with local posting and reconciliation. Historical registers without verified results reject replay pending review. Current native errors use HTTP 422 for instruction conflicts; the richer versioned Logistics command error contract above remains a separate integration task. Partial multi-batch allocation and batches whose currencies differ from the instruction are rejected; full same-currency batches and ordinary single-document partial payments are supported. Pre-bill advances, independently approved recipient changes, the full unknown-outcome lifecycle and cross-writer reversal controls remain required work, not implied by this registration repair.
+
+
 ## IC9. Evidence and Chatter
 
 **Owner:** Logistics for protected evidence; Support/Chatter for collaboration.
@@ -147,7 +152,7 @@ An external receiver/provider/payment/channel adapter is disabled until its capa
 | Validation/authorization/revision conflict | Reject with zero effects and actionable reason. |
 | Known invariant conflict | Reject under lock; preserve existing state. |
 | Local late failure | Roll back the whole transaction. |
-| Deadlock/serialization failure | Retry the complete database-only command with same intent within bounded policy. |
+| Deadlock/serialization failure | Roll back first, then retry the complete database-only command with the same intent within an explicit bounded policy. Current native transfer services surface the failure; they do not retry a downstream step or silently repeat the command. |
 | Lost response | Lookup canonical result before re-execution. |
 | Remote timeout/unknown | Persist uncertainty, protect scope/amount, reconcile original identity. |
 | Optional notification failure | Preserve committed business result and retry/record only if notification is required. |
