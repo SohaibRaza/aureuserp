@@ -141,7 +141,7 @@ Ensure your development environment meets the following requirements:
 
 ### Server Requirements
 -   **PHP**: 8.3 or higher
--   **Database**: MySQL 8.0+, MariaDB 10.6+, or PostgreSQL 16+
+-   **Database**: PostgreSQL for this AureusERP project's development, test, and release baseline. The upstream application may support additional Laravel database adapters, but this fork does not claim or verify them as supported targets. See [ADR 0007](docs/adr/0007-postgresql-project-baseline.md).
 -   **Web Server**: Apache 2.4+ or Nginx 1.18+
 
 ### Development Tools

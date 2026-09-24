@@ -13,3 +13,15 @@ Status values are `Proposed`, `Accepted`, `Superseded`, or `Deprecated`. An acce
 | [0003](0003-allocation-matching-without-invented-accounting-reconciliation.md) | Keep bank clearing allocations distinct from AR/AP reconciliation | Accepted |
 | [0004](0004-immutable-completion-and-controlled-reopen.md) | Finalize to immutable evidence and reopen through approval | Accepted |
 | [0005](0005-layered-financial-mutation-controls.md) | Enforce financial mutations through layered controls | Accepted |
+
+## Repository workflow decisions
+
+| ADR | Decision | Status |
+|---|---|---|
+| [0006](0006-issue-and-project-tracking.md) | Keep repository labels generic and track initiative phases in module Projects | Accepted |
+
+## Project platform decisions
+
+| ADR | Decision | Status |
+|---|---|---|
+| [0007](0007-postgresql-project-baseline.md) | Use PostgreSQL as the project database and acceptance baseline | Accepted |

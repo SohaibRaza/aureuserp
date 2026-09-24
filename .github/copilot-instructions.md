@@ -1,3 +1,8 @@
+## Required documentation entry points
+- Before any Logistics change, read [`docs/logistics/README.md`](../docs/logistics/README.md), then the relevant documents in [`docs/logistics/plan/README.md`](../docs/logistics/plan/README.md). The consolidated plan is the target design; repository code and historical reports are evidence, not business authority.
+- Before changing issue labels, phase tracking, Logistics or ERP Projects, or project automation, read [`docs/adr/0006-issue-and-project-tracking.md`](../docs/adr/0006-issue-and-project-tracking.md). Do not create module-specific phase labels; use the owning Project's Phase field.
+- Before making or changing an architecture decision, check [`docs/adr/README.md`](../docs/adr/README.md) and the relevant ADR. Record approved consequential decisions there and link them from the owning module documentation.
+
 <laravel-boost-guidelines>
 === foundation rules ===
 
