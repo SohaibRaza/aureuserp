@@ -33,12 +33,15 @@ return [
 
     'move-line' => [
         'negative-quantity-not-allowed' => 'Reserving a negative quantity is not allowed.',
+        'stale-line'                    => 'The stock movement line changed. Reload it before saving or deleting.',
+        'connection-mismatch'           => 'Stock movement lines must use the Inventory database connection.',
     ],
 
     'product-quantity' => [
         'quantity-not-set'                 => 'Quantity or Reserved Quantity should be set.',
         'removal-strategy-not-implemented' => 'Removal strategy :strategy not implemented.',
         'unreserve-more-than-stock'        => 'It is not possible to unreserve more products of :name than you have in stock.',
+        'reservation-out-of-bounds'        => 'The reservation exceeds available stock or releases more than is reserved.',
     ],
 
     'product' => [

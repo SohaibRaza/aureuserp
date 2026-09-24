@@ -139,7 +139,7 @@ it('creates an order with lines in a single API call', function () {
         'payment_term_id' => $payload['payment_term_id'],
     ]);
 
-    test()->assertDatabaseCount('sales_order_lines', 2);
+    expect(OrderLine::query()->where('order_id', $orderId)->count())->toBe(2);
 });
 
 it('validates required fields when creating an order', function (string $field) {

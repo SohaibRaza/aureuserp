@@ -3,6 +3,7 @@
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\OperationState;
 use Webkul\Inventory\Facades\Inventory;
+use Webkul\Inventory\Models\ProductQuantity;
 
 require_once __DIR__.'/../../../../support/tests/Helpers/TestBootstrapHelper.php';
 require_once __DIR__.'/../../Helpers/InventoryHelper.php';
@@ -255,9 +256,10 @@ it('keeps a counted quant with a zero quantity instead of sweeping it', function
 
     $quant->update(['user_id' => InventoryHelper::actingAsAdmin()->id]);
 
-    InventoryHelper::stockUp($this->product, $this->warehouse->lotStockLocation, 5);
+    ProductQuantity::purgeEmpty([$this->product->id]);
 
-    expect(InventoryHelper::quantOf($this->product, $this->stock))->not->toBeNull();
+    expect(InventoryHelper::quantOf($this->product, $this->stock))->not->toBeNull()
+        ->and((float) $quant->fresh()->quantity)->toBe(0.0);
 });
 
 it('returns the reserved quantity to stock when a return of a return is created', function () {

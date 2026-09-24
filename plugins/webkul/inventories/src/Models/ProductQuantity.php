@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 use Illuminate\Support\Facades\Auth;
+use InvalidArgumentException;
 use Webkul\Inventory\Database\Factories\ProductQuantityFactory;
 use Webkul\Inventory\Enums\LocationType;
 use Webkul\Inventory\Enums\MoveState;
@@ -173,7 +174,7 @@ class ProductQuantity extends Model
                 $stock->syncPackagePlacement();
             }
 
-            static::purgeEmpty();
+            static::purgeEmpty([$stock->product_id]);
         });
     }
 
@@ -319,52 +320,70 @@ class ProductQuantity extends Model
             throw new \Exception(__('inventories::system.product-quantity.quantity-not-set'));
         }
 
-        $candidates = static::findFor($product, $location, lot: $lot, package: $package, strict: true);
+        return (new static)->getConnection()->transaction(function () use ($product, $location, $quantityDelta, $reservedDelta, $lot, $package, $incomingDate): array {
+            // Serialize creation as well as updates; a missing balance row cannot be row-locked.
+            Product::query()->withoutGlobalScopes()->whereKey($product->id)->lockForUpdate()->firstOrFail();
 
-        if ($lot && $quantityDelta > 0) {
-            $candidates = $candidates->filter(fn (self $stock) => $stock->lot_id);
-        }
-
-        $incomingDate ??= now();
-
-        $stock = $candidates->isEmpty()
-            ? null
-            : static::query()
-                ->whereIn('id', $candidates->pluck('id'))
-                ->orderBy('lot_id')
-                ->orderBy('id')
+            $stock = static::query()
+                ->where('company_id', $location->company_id)
+                ->where('product_id', $product->id)
+                ->where('location_id', $location->id)
+                ->where('lot_id', $lot?->id)
+                ->where('package_id', $package?->id)
+                ->whereNull('partner_id')
                 ->lockForUpdate()
                 ->first();
 
-        if ($stock) {
-            $stock->update(array_filter([
-                'quantity'          => $quantityDelta ? $stock->quantity + $quantityDelta : null,
-                'reserved_quantity' => $reservedDelta ? $stock->reserved_quantity + $reservedDelta : null,
-            ], fn ($value) => $value !== null));
-        } else {
-            static::create(array_filter([
-                'product_id'        => $product->id,
-                'location_id'       => $location->id,
-                'lot_id'            => $lot?->id,
-                'package_id'        => $package?->id,
-                'quantity'          => $quantityDelta ?: null,
-                'reserved_quantity' => $reservedDelta ?: null,
-            ], fn ($value) => $value !== null));
-        }
+            $incomingDate ??= now();
 
-        return [
-            static::availableFor($product, $location, lot: $lot, package: $package, strict: true, allowNegative: true),
-            $incomingDate,
-        ];
+            if ($reservedDelta !== null) {
+                $reserved = round((float) ($stock?->reserved_quantity ?? 0) + $reservedDelta, 4);
+
+                if ($reserved < 0 || ($reservedDelta > 0 && $reserved > (float) ($stock?->quantity ?? 0))) {
+                    throw new InvalidArgumentException(__('inventories::system.product-quantity.reservation-out-of-bounds'));
+                }
+            }
+
+            if ($stock) {
+                $stock->update(array_filter([
+                    'quantity'          => $quantityDelta ? $stock->quantity + $quantityDelta : null,
+                    'reserved_quantity' => $reservedDelta ? $stock->reserved_quantity + $reservedDelta : null,
+                ], fn ($value) => $value !== null));
+            } else {
+                static::create(array_filter([
+                    'product_id'        => $product->id,
+                    'location_id'       => $location->id,
+                    'lot_id'            => $lot?->id,
+                    'package_id'        => $package?->id,
+                    'quantity'          => $quantityDelta ?: null,
+                    'reserved_quantity' => $reservedDelta ?: null,
+                ], fn ($value) => $value !== null));
+            }
+
+            return [
+                static::availableFor($product, $location, lot: $lot, package: $package, strict: true, allowNegative: true),
+                $incomingDate,
+            ];
+        });
     }
 
-    public static function purgeEmpty(): void
+    /**
+     * @param  array<int, int>|null  $productIds
+     */
+    public static function purgeEmpty(?array $productIds = null): void
     {
-        static::query()
-            ->where(fn ($query) => $query->whereRaw('ROUND(quantity, ?) = 0', [6])->orWhereNull('quantity'))
-            ->whereRaw('ROUND(reserved_quantity, ?) = 0', [6])
-            ->whereNull('user_id')
-            ->delete();
+        (new static)->getConnection()->transaction(function () use ($productIds): void {
+            $query = static::query()
+                ->where(fn ($query) => $query->whereRaw('ROUND(quantity, ?) = 0', [6])->orWhereNull('quantity'))
+                ->whereRaw('ROUND(reserved_quantity, ?) = 0', [6])
+                ->whereNull('user_id');
+
+            $productIds ??= (clone $query)->distinct()->pluck('product_id')->all();
+
+            Product::query()->withoutGlobalScopes()->whereKey($productIds)->orderBy('id')->lockForUpdate()->get();
+
+            $query->whereIn('product_id', $productIds)->delete();
+        });
     }
 
     public function refreshCountSchedule(): void

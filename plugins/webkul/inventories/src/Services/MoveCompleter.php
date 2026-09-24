@@ -17,60 +17,64 @@ class MoveCompleter
 {
     public function complete(Collection $moves, bool $cancelBackorder = false): Collection
     {
-        $reconfirmed = app(MoveConfirmer::class)->confirm(
-            $moves->filter(fn (Move $move) => $move->state === MoveState::DRAFT
-                || float_is_zero($move->product_uom_qty, precisionRounding: $move->uom->rounding)),
-            merge: false
-        );
+        return (new Move)->getConnection()->transaction(function () use ($moves, $cancelBackorder): Collection {
+            $moves = Move::lockForStockMutation($moves);
 
-        $moves = $moves->merge($reconfirmed)
-            ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DONE, MoveState::CANCELED]));
+            $reconfirmed = app(MoveConfirmer::class)->confirm(
+                $moves->filter(fn (Move $move) => $move->state === MoveState::DRAFT
+                    || float_is_zero($move->product_uom_qty, precisionRounding: $move->uom->rounding)),
+                merge: false
+            );
 
-        $this->dropUnpickedLines($moves, $cancelBackorder);
+            $moves = $moves->merge($reconfirmed)
+                ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DONE, MoveState::CANCELED]));
 
-        $completable = $moves->filter(fn (Move $move) => ! (
-            $move->state === MoveState::CANCELED
-            || ($move->quantity <= 0 && ! $move->is_inventory)
-            || ! $move->is_picked
-        ));
+            $this->dropUnpickedLines($moves, $cancelBackorder);
 
-        if (! $cancelBackorder) {
-            app(BackorderCreator::class)->splitShortMoves($completable);
-        }
+            $completable = $moves->filter(fn (Move $move) => ! (
+                $move->state === MoveState::CANCELED
+                || ($move->quantity <= 0 && ! $move->is_inventory)
+                || ! $move->is_picked
+            ));
 
-        $this->completeLines($completable->flatMap->lines->sortBy('id'));
-
-        $this->assertPackagesStayWhole($completable);
-
-        if ($completable->flatMap->lines->some(fn (MoveLine $line) => $line->package_id && $line->package_id === $line->result_package_id)) {
-            ProductQuantity::purgeEmpty();
-        }
-
-        $operation = $completable->pluck('operation')->unique()->filter()->first();
-
-        $completable->each->update(['state' => MoveState::DONE, 'date' => now()]);
-
-        $pushable = $completable->filter(fn (Move $move) => ! $move->skipsPushRules());
-
-        if ($pushable->isNotEmpty()) {
-            app(PushRuleRunner::class)->run($pushable);
-        }
-
-        $this->reserveDownstream($completable);
-
-        $this->reserveWaitingOnRestock($completable);
-
-        if ($operation && ! $cancelBackorder) {
-            $backorder = app(BackorderCreator::class)->createFor($operation);
-
-            if ($backorder?->moves->some(fn (Move $move) => $move->state === MoveState::ASSIGNED)) {
-                app(PackageLevelSynchronizer::class)->syncFor($backorder);
+            if (! $cancelBackorder) {
+                app(BackorderCreator::class)->splitShortMoves($completable);
             }
-        }
 
-        $completable->each(fn (Move $move) => $move->assertSerialUniqueness());
+            $this->completeLines($completable->flatMap->lines->sortBy('id'));
 
-        return $completable;
+            $this->assertPackagesStayWhole($completable);
+
+            if ($completable->flatMap->lines->some(fn (MoveLine $line) => $line->package_id && $line->package_id === $line->result_package_id)) {
+                ProductQuantity::purgeEmpty($completable->pluck('product_id')->unique()->all());
+            }
+
+            $operation = $completable->pluck('operation')->unique()->filter()->first();
+
+            $completable->each->update(['state' => MoveState::DONE, 'date' => now()]);
+
+            $pushable = $completable->filter(fn (Move $move) => ! $move->skipsPushRules());
+
+            if ($pushable->isNotEmpty()) {
+                app(PushRuleRunner::class)->run($pushable);
+            }
+
+            $this->reserveDownstream($completable);
+
+            $this->reserveWaitingOnRestock($completable);
+
+            if ($operation && ! $cancelBackorder) {
+                $backorder = app(BackorderCreator::class)->createFor($operation);
+
+                if ($backorder?->moves->some(fn (Move $move) => $move->state === MoveState::ASSIGNED)) {
+                    app(PackageLevelSynchronizer::class)->syncFor($backorder);
+                }
+            }
+
+            $completable->each(fn (Move $move) => $move->assertSerialUniqueness());
+
+            return $completable;
+        });
     }
 
     public function completeLines(Collection $lines): void

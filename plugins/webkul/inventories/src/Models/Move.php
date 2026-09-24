@@ -363,7 +363,7 @@ class Move extends Model
             }
 
             if ($move->wasChanged('state')) {
-                $move->lines->each(fn (MoveLine $line) => $line->update(['state' => $line->move->refresh()->state]));
+                $move->lines()->get()->each(fn (MoveLine $line) => $line->update(['state' => $line->move->refresh()->state]));
 
                 if ($operation = $move->operation) {
                     $operation->refresh();
@@ -953,6 +953,48 @@ class Move extends Model
         }
 
         return $claimed;
+    }
+
+    /**
+     * @param  Collection<int, self>  $moves
+     * @param  array<int, int>  $additionalProductIds
+     * @return Collection<int, self>
+     */
+    public static function lockForStockMutation(Collection $moves, array $additionalProductIds = []): Collection
+    {
+        $connection = (new static)->getConnection();
+
+        if ($connection->transactionLevel() === 0) {
+            throw new \LogicException('Stock movement locks require an active transaction.');
+        }
+
+        if ($moves->contains(fn (self $move) => ! $move->exists || $move->getConnection() !== $connection)) {
+            throw new \InvalidArgumentException('Stock movements must be persisted on the Inventory connection.');
+        }
+
+        $operationIds = static::query()->whereKey($moves->pluck('id'))->pluck('operation_id')->filter()->unique();
+        $productIds = static::query()
+            ->where(fn ($query) => $query->whereKey($moves->pluck('id'))->orWhereIn('operation_id', $operationIds))
+            ->pluck('product_id')->merge($additionalProductIds)->filter()->unique();
+
+        // ponytail: Product locks serialize locations; use finer balance locks only after measuring contention.
+        Product::withTrashed()->whereKey($productIds)->orderBy('id')->lockForUpdate()->get();
+        Operation::query()->whereKey($operationIds)->orderBy('id')->lockForUpdate()->get();
+
+        $locked = static::query()->whereKey($moves->pluck('id'))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+
+        if ($locked->count() !== $moves->pluck('id')->unique()->count()
+            || $locked->contains(fn (self $move) => ! $productIds->contains($move->product_id)
+                || ($move->operation_id && ! $operationIds->contains($move->operation_id)))) {
+            throw new \RuntimeException('Stock movements changed while acquiring locks. Reload before retrying.');
+        }
+
+        return $moves->map(function (self $move) use ($locked): self {
+            $move->setRawAttributes($locked[$move->id]->getAttributes(), true);
+            $move->unsetRelations();
+
+            return $move;
+        });
     }
 
     public function reserveFrom(

@@ -127,6 +127,8 @@ it('includes an extra manually added component alongside the bill of materials',
 });
 
 it('flags a consumption issue when a strict bill of materials is under-consumed', function () {
+    InventoryHelper::stockUp($this->componentA, $this->stock, 12);
+
     $bom = ManufacturingHelper::bom($this->finished, [[$this->componentA, 2]], ['consumption' => BillOfMaterialConsumption::STRICT]);
 
     $order = ManufacturingHelper::order($this->warehouse, $this->finished, $bom, 5);
@@ -139,6 +141,8 @@ it('flags a consumption issue when a strict bill of materials is under-consumed'
 });
 
 it('flags a consumption issue when a strict bill of materials is over-consumed', function () {
+    InventoryHelper::stockUp($this->componentA, $this->stock, 12);
+
     $bom = ManufacturingHelper::bom($this->finished, [[$this->componentA, 2]], ['consumption' => BillOfMaterialConsumption::STRICT]);
 
     $order = ManufacturingHelper::order($this->warehouse, $this->finished, $bom, 5);
@@ -151,6 +155,8 @@ it('flags a consumption issue when a strict bill of materials is over-consumed',
 });
 
 it('raises no consumption issue for a flexible bill of materials', function () {
+    InventoryHelper::stockUp($this->componentA, $this->stock, 12);
+
     $bom = ManufacturingHelper::bom($this->finished, [[$this->componentA, 2]], ['consumption' => BillOfMaterialConsumption::FLEXIBLE]);
 
     $order = ManufacturingHelper::order($this->warehouse, $this->finished, $bom, 5);

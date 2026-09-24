@@ -10,6 +10,8 @@ use Webkul\Inventory\Enums\ProductTracking;
 use Webkul\Inventory\Enums\ReceptionStep;
 use Webkul\Inventory\Facades\Inventory;
 use Webkul\Inventory\Models\Move;
+use Webkul\Inventory\Models\Product as InventoryProduct;
+use Webkul\Inventory\Models\ProductQuantity;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\Sale\Enums\AdvancedPayment;
@@ -324,9 +326,9 @@ it('invoices only the delivered quantity under the delivery policy', function ()
 it('flags up-selling when the delivered quantity exceeds the ordered quantity under the order policy', function () {
     $product = SaleHelper::product(['invoice_policy' => 'order']);
 
-    InventoryHelper::stockUp($product, $this->stock, 2);
-
     $order = SaleHelper::confirmedOrder($this->warehouse, $product, 10);
+
+    ProductQuantity::applyQuantityDelta(InventoryProduct::findOrFail($product->id), $this->stock, 2);
 
     SaleHelper::partialDeliver($order, 12);
 

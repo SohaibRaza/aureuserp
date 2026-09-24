@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use InvalidArgumentException;
 use Webkul\Inventory\Database\Factories\MoveLineFactory;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\ProcureMethod;
@@ -24,6 +25,51 @@ class MoveLine extends Model
     use HasFactory;
 
     protected $table = 'inventories_move_lines';
+
+    public function save(array $options = []): bool
+    {
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            $this->lockStockMutation();
+
+            $saved = parent::save($options);
+
+            if ($saved) {
+                $this->refresh();
+            }
+
+            return $saved;
+        });
+    }
+
+    public function delete(): ?bool
+    {
+        return $this->getConnection()->transaction(function (): ?bool {
+            $this->lockStockMutation();
+
+            return parent::delete();
+        });
+    }
+
+    protected function lockStockMutation(): void
+    {
+        if ($this->getConnection() !== (new Move)->getConnection()) {
+            throw new InvalidArgumentException(__('inventories::system.move-line.connection-mismatch'));
+        }
+
+        $moves = Move::query()->whereKey(array_filter([$this->move_id, $this->getRawOriginal('move_id')]))->get();
+        Move::lockForStockMutation($moves, array_values(array_filter([$this->product_id, $this->getRawOriginal('product_id')])));
+
+        if ($this->exists) {
+            $current = static::query()->whereKey($this->id)->lockForUpdate()->firstOrFail();
+            foreach (['qty', 'uom_qty', 'move_id', 'product_id', 'uom_id', 'source_location_id', 'destination_location_id', 'lot_id', 'package_id', 'result_package_id', 'state', 'is_picked', 'company_id'] as $field) {
+                if ($this->getRawOriginal($field) != $current->getRawOriginal($field)) {
+                    throw new InvalidArgumentException(__('inventories::system.move-line.stale-line'));
+                }
+            }
+        }
+
+        $this->unsetRelations();
+    }
 
     protected $fillable = [
         'lot_name',
@@ -214,6 +260,8 @@ class MoveLine extends Model
 
     protected function refreshMove(): void
     {
+        $this->move->unsetRelations();
+
         $this->move->computeQuantity();
 
         $this->move->computeState();

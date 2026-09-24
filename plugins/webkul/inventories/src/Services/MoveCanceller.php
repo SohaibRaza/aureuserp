@@ -11,32 +11,36 @@ class MoveCanceller
 {
     public function cancel(Collection $moves): bool
     {
-        if ($moves->some(fn (Move $move) => $move->state === MoveState::DONE && ! $move->is_scraped)) {
-            throw new \Exception(__('inventories::system.inventory-manager.cancel-move.already-done'));
-        }
+        return (new Move)->getConnection()->transaction(function () use ($moves): bool {
+            $moves = Move::lockForStockMutation($moves);
 
-        $cancellable = $moves->filter(
-            fn (Move $move) => $move->state !== MoveState::CANCELED
-                && ! ($move->state === MoveState::DONE && $move->is_scraped)
-        );
+            if ($moves->some(fn (Move $move) => $move->state === MoveState::DONE && ! $move->is_scraped)) {
+                throw new \Exception(__('inventories::system.inventory-manager.cancel-move.already-done'));
+            }
 
-        $cancellable->each->update(['is_picked' => false]);
+            $cancellable = $moves->filter(
+                fn (Move $move) => $move->state !== MoveState::CANCELED
+                    && ! ($move->state === MoveState::DONE && $move->is_scraped)
+            );
 
-        app(MoveReserver::class)->release($cancellable);
+            $cancellable->each->update(['is_picked' => false]);
 
-        $cancellable->each->update(['state' => MoveState::CANCELED]);
+            app(MoveReserver::class)->release($cancellable);
 
-        foreach ($cancellable as $move) {
-            $this->propagate($move);
-        }
+            $cancellable->each->update(['state' => MoveState::CANCELED]);
 
-        $cancellable->each(function (Move $move) {
-            $move->update(['procure_method' => ProcureMethod::MAKE_TO_STOCK]);
+            foreach ($cancellable as $move) {
+                $this->propagate($move);
+            }
 
-            $move->moveOrigins()->detach();
+            $cancellable->each(function (Move $move) {
+                $move->update(['procure_method' => ProcureMethod::MAKE_TO_STOCK]);
+
+                $move->moveOrigins()->detach();
+            });
+
+            return true;
         });
-
-        return true;
     }
 
     protected function propagate(Move $move): void

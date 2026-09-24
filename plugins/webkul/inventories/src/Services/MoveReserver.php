@@ -17,6 +17,13 @@ class MoveReserver
 {
     public function reserve(Collection $moves, mixed $forceQty = false): void
     {
+        (new Move)->getConnection()->transaction(function () use ($moves, $forceQty): void {
+            $this->reserveLocked(Move::lockForStockMutation($moves), $forceQty);
+        });
+    }
+
+    protected function reserveLocked(Collection $moves, mixed $forceQty = false): void
+    {
         if ($moves->isEmpty()) {
             return;
         }
@@ -71,6 +78,11 @@ class MoveReserver
 
     public function release(Collection $moves): bool
     {
+        return (new Move)->getConnection()->transaction(fn () => $this->releaseLocked(Move::lockForStockMutation($moves)));
+    }
+
+    protected function releaseLocked(Collection $moves): bool
+    {
         $releasable = $moves->filter(function (Move $move) {
             if (
                 $move->state === MoveState::CANCELED
@@ -94,6 +106,8 @@ class MoveReserver
         MoveLine::whereIn('id', $lineIds)->get()->each->delete();
 
         $releasable->each(function (Move $move) {
+            $move->unsetRelations();
+
             $move->computeQuantity();
 
             $move->computeState();

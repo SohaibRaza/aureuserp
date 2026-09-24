@@ -3,6 +3,7 @@
 namespace Webkul\Inventory\Services;
 
 use Carbon\Carbon;
+use Closure;
 use Illuminate\Support\Collection;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\OperationState;
@@ -23,87 +24,95 @@ class TransferWorkflow
 {
     public function confirm(Operation $operation): Operation
     {
-        app(MoveConfirmer::class)->confirm(
-            $operation->moves->filter(fn (Move $move) => $move->state === MoveState::DRAFT)
-        );
+        return $this->withLockedOperation($operation, function () use ($operation): Operation {
+            app(MoveConfirmer::class)->confirm(
+                $operation->moves->filter(fn (Move $move) => $move->state === MoveState::DRAFT)
+            );
 
-        $this->refreshState($operation);
+            $this->refreshState($operation);
 
-        OperationConfirmed::dispatch($operation);
+            OperationConfirmed::dispatch($operation);
 
-        return $operation;
+            return $operation;
+        });
     }
 
     public function reserve(Operation $operation): Operation
     {
-        if ($operation->state === OperationState::DRAFT) {
-            $operation = $this->confirm($operation);
-        }
+        return $this->withLockedOperation($operation, function () use ($operation): Operation {
+            if ($operation->state === OperationState::DRAFT) {
+                $operation = $this->confirm($operation);
+            }
 
-        $moves = $operation->moves
-            ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DRAFT, MoveState::CANCELED, MoveState::DONE]))
-            ->sortBy([
-                fn (Move $move) => ! (bool) $move->deadline,
-                fn (Move $move) => $move->deadline,
-                fn (Move $move) => $move->scheduled_at,
-                fn (Move $move) => $move->id,
-            ]);
+            $moves = $operation->moves
+                ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DRAFT, MoveState::CANCELED, MoveState::DONE]))
+                ->sortBy([
+                    fn (Move $move) => ! (bool) $move->deadline,
+                    fn (Move $move) => $move->deadline,
+                    fn (Move $move) => $move->scheduled_at,
+                    fn (Move $move) => $move->id,
+                ]);
 
-        if ($moves->isEmpty()) {
-            throw new \Exception(__('inventories::system.inventory-manager.check-availability.no-moves'));
-        }
+            if ($moves->isEmpty()) {
+                throw new \Exception(__('inventories::system.inventory-manager.check-availability.no-moves'));
+            }
 
-        app(MoveReserver::class)->reserve($moves);
+            app(MoveReserver::class)->reserve($moves);
 
-        $this->refreshState($operation);
+            $this->refreshState($operation);
 
-        OperationAssigned::dispatch($operation);
+            OperationAssigned::dispatch($operation);
 
-        return $operation;
+            return $operation;
+        });
     }
 
     public function complete(Operation $operation, bool $cancelBackorder = false): Operation
     {
-        app(TransferValidator::class)->assertReadyToComplete($operation);
+        return $this->withLockedOperation($operation, function () use ($operation, $cancelBackorder): Operation {
+            app(TransferValidator::class)->assertReadyToComplete($operation);
 
-        $pending = $operation->moves->filter(fn (Move $move) => in_array($move->state, [
-            MoveState::DRAFT,
-            MoveState::WAITING,
-            MoveState::PARTIALLY_ASSIGNED,
-            MoveState::ASSIGNED,
-            MoveState::CONFIRMED,
-        ]));
+            $pending = $operation->moves->filter(fn (Move $move) => in_array($move->state, [
+                MoveState::DRAFT,
+                MoveState::WAITING,
+                MoveState::PARTIALLY_ASSIGNED,
+                MoveState::ASSIGNED,
+                MoveState::CONFIRMED,
+            ]));
 
-        $this->markEverythingPickedIfNeeded($operation);
+            $this->markEverythingPickedIfNeeded($operation);
 
-        app(MoveCompleter::class)->complete($pending, $cancelBackorder);
+            app(MoveCompleter::class)->complete($pending, $cancelBackorder);
 
-        $operation->refresh();
+            $operation->refresh();
 
-        $operation->computeState();
+            $operation->computeState();
 
-        $operation->closed_at = Carbon::now();
+            $operation->closed_at = Carbon::now();
 
-        $operation->save();
+            $operation->save();
 
-        ProductQuantity::purgeEmpty();
+            ProductQuantity::purgeEmpty($pending->pluck('product_id')->unique()->all());
 
-        OperationDone::dispatch($operation);
+            OperationDone::dispatch($operation);
 
-        return $operation;
+            return $operation;
+        });
     }
 
     public function cancel(Operation $operation): Operation
     {
-        app(MoveCanceller::class)->cancel($operation->moves);
+        return $this->withLockedOperation($operation, function () use ($operation): Operation {
+            app(MoveCanceller::class)->cancel($operation->moves);
 
-        $operation->computeState();
+            $operation->computeState();
 
-        $operation->save();
+            $operation->save();
 
-        OperationCanceled::dispatch($operation);
+            OperationCanceled::dispatch($operation);
 
-        return $operation;
+            return $operation;
+        });
     }
 
     public function createReturn(Operation $operation, array $moveQuantities = []): Operation
@@ -256,6 +265,28 @@ class TransferWorkflow
         }
 
         return $attributes;
+    }
+
+    protected function withLockedOperation(Operation $operation, Closure $callback): Operation
+    {
+        $connection = $operation->getConnection();
+
+        if ($connection !== (new Move)->getConnection()) {
+            throw new \InvalidArgumentException('Transfer execution requires the Inventory database connection.');
+        }
+
+        return $connection->transaction(function () use ($operation, $callback): Operation {
+            $moves = Move::lockForStockMutation($operation->moves()->get());
+            $locked = $operation->newQuery()->whereKey($operation->id)->lockForUpdate()->firstOrFail();
+            $operation->setRawAttributes($locked->getAttributes(), true);
+            $operation->unsetRelations();
+            if ($operation->moves()->orderBy('id')->pluck('id')->all() !== $moves->pluck('id')->sort()->values()->all()) {
+                throw new \RuntimeException('Transfer movements changed while acquiring locks. Reload before retrying.');
+            }
+            $operation->setRelation('moves', $moves);
+
+            return $callback();
+        });
     }
 
     protected function markEverythingPickedIfNeeded(Operation $operation): void

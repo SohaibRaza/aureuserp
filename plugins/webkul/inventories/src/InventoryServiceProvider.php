@@ -109,6 +109,7 @@ class InventoryServiceProvider extends PackageServiceProvider
                 '2026_06_22_104603_add_additional_column_in_inventories_moves_table',
                 '2026_07_21_130000_provision_company_virtual_locations',
                 '2026_08_03_130000_seed_inventories_sequences',
+                '2026_09_24_010000_enforce_product_quantity_identity',
             ])
             ->runsMigrations()
             ->hasSettings([
