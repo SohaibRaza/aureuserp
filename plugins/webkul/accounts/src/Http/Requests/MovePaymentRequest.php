@@ -23,6 +23,7 @@ class MovePaymentRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'idempotency_key'        => ['sometimes', 'required', 'string', 'max:128', 'regex:/\A[A-Za-z0-9][A-Za-z0-9._:-]*\z/'],
             'journal_id'             => ['sometimes', 'required', 'integer', 'exists:accounts_journals,id'],
             'payment_method_line_id' => ['sometimes', 'required', 'integer', 'exists:accounts_payment_method_lines,id'],
             'partner_bank_id'        => ['nullable', 'integer', 'exists:partners_bank_accounts,id'],
@@ -42,6 +43,10 @@ class MovePaymentRequest extends FormRequest
     public function bodyParameters(): array
     {
         return [
+            'idempotency_key' => [
+                'description' => 'Stable unique payment request key. Reuse with identical input to recover the same payment result. Omitted keys create distinct instructions and do not provide request replay protection.',
+                'example'     => 'payment-2026-0001',
+            ],
             'journal_id' => [
                 'description' => 'Payment journal ID. If omitted, the first available journal is used.',
                 'example'     => 1,

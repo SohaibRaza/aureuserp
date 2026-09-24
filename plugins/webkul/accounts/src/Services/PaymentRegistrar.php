@@ -3,7 +3,11 @@
 namespace Webkul\Account\Services;
 
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Gate;
+use InvalidArgumentException;
+use Throwable;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\PaymentState;
@@ -11,32 +15,228 @@ use Webkul\Account\Enums\PaymentStatus;
 use Webkul\Account\Enums\PaymentType;
 use Webkul\Account\Events\MovePaid;
 use Webkul\Account\Models\Move as AccountMove;
+use Webkul\Account\Models\MoveLine;
 use Webkul\Account\Models\Payment;
 use Webkul\Account\Models\PaymentRegister;
+use Webkul\Support\Services\CompanyContext;
 
 class PaymentRegistrar
 {
-    public function register(PaymentRegister $register): void
+    public function register(PaymentRegister $register): array
     {
-        $batches = $this->payableBatches($register);
+        $connection = (new Payment)->getConnection();
 
-        $singleBatch = $batches[0];
+        if ($register->getConnection() !== $connection
+            || $register->lines->contains(fn ($line) => $line->getConnection() !== $connection || $line->move->getConnection() !== $connection)) {
+            throw new InvalidArgumentException('Payment registration requires all records to use the Accounts database connection.');
+        }
 
-        $editMode = $register->is_single_batch
-            && (count($singleBatch['lines']) == 1 || $register->group_payment);
+        if (! $register->exists) {
+            throw new InvalidArgumentException('A payment instruction must be saved before registration.');
+        }
 
-        $pending = $editMode
-            ? [$this->singleBatchJob($register, $singleBatch)]
-            : $this->perBatchJobs($register, $batches);
+        return $connection->transaction(function () use ($register, $connection): array {
+            $stored = $connection->table($register->getTable())->where('id', $register->id)->lockForUpdate()->first();
+            if (! $stored) {
+                throw new InvalidArgumentException('Payment instruction does not exist.');
+            }
+            Gate::authorize('create', Payment::class);
+            if (! in_array((int) $stored->company_id, app(CompanyContext::class)->activeIds(), true)) {
+                throw new AuthorizationException('Payment instruction is outside the active company scope.');
+            }
+            $lineIds = $register->lines()->orderBy('accounts_account_move_lines.id')->pluck('accounts_account_move_lines.id')->all();
+            $fingerprint = $this->registrationFingerprint((array) $stored, $lineIds);
+            if ($this->registrationFingerprint($register->getAttributes(), $lineIds) !== $fingerprint) {
+                throw new InvalidArgumentException('Payment instruction changed; reload it before registration.');
+            }
+            if ($stored->registration_state === 'completed') {
+                if ($stored->registration_fingerprint !== $fingerprint) {
+                    throw new InvalidArgumentException('Payment instruction conflicts with its completed registration.');
+                }
 
-        $this->createPayments($register, $pending, $editMode);
+                return json_decode($stored->registered_payment_ids, true, flags: JSON_THROW_ON_ERROR);
+            }
+            if ($stored->registration_state !== 'pending') {
+                throw new InvalidArgumentException('Historical payment instruction has no verified outcome; reconcile it before retrying.');
+            }
+            if ($lineIds === []) {
+                throw new InvalidArgumentException('Payment instruction has no source lines.');
+            }
+            $moveIds = MoveLine::query()->whereKey($lineIds)->pluck('move_id')->unique()->sort()->values()->all();
+            $moves = AccountMove::query()->whereKey($moveIds)->orderBy('id')->lockForUpdate()->get();
+            $lines = MoveLine::query()->whereKey($lineIds)->orderBy('id')->lockForUpdate()->get();
+            if ($lines->count() !== count($lineIds) || $moves->count() !== count($moveIds)
+                || $moves->contains(fn (AccountMove $move): bool => $move->state !== MoveState::POSTED || (int) $move->company_id !== (int) $stored->company_id)
+                || $lines->contains(fn (MoveLine $line): bool => (int) $line->company_id !== (int) $stored->company_id
+                    || $line->reconciled || $line->parent_state !== MoveState::POSTED
+                    || ! in_array($line->account->account_type, [AccountType::ASSET_RECEIVABLE, AccountType::LIABILITY_PAYABLE], true))) {
+                throw new InvalidArgumentException('Payment sources are no longer eligible for this company.');
+            }
+            $register = new PaymentRegister;
+            $register->setRawAttributes((array) $stored, true);
+            $register->exists = true;
+            $register->setRelation('lines', $lines);
+            $register->computeBatches();
+            $register->computeFromLines();
+            $register->computeWriteoffIsExchangeAccount();
+            $register->computeShowRequirePartnerBank();
+            $remaining = $register->getTotalAmountsToPay($register->batches)['full_amount'];
+            if (! is_finite((float) $register->amount) || (float) $register->amount <= 0
+                || $register->currency->compareAmounts($register->amount, $remaining) > 0) {
+                throw new InvalidArgumentException('Payment amount must be positive and cannot exceed the remaining source amount.');
+            }
+            if ((int) $register->journal->company_id !== (int) $stored->company_id
+                || (int) $register->paymentMethodLine->journal_id !== (int) $register->journal_id) {
+                throw new InvalidArgumentException('Payment journal and method must belong to the instruction company.');
+            }
+            $batches = $this->payableBatches($register);
 
-        $this->postPayments($pending);
+            $singleBatch = $batches[0];
 
-        $this->reconcilePayments($pending);
+            $editMode = $register->is_single_batch
+                && (count($singleBatch['lines']) == 1 || $register->group_payment);
 
-        $register->lines->map(fn ($line) => $line->move)->unique()
-            ->each(fn ($move) => MovePaid::dispatch($move));
+            if (! $editMode && $register->currency->compareAmounts($register->amount, $remaining) !== 0) {
+                throw new InvalidArgumentException('Payment batches must total the requested amount; partial batch allocation is not supported.');
+            }
+
+            $pending = $editMode
+                ? [$this->singleBatchJob($register, $singleBatch)]
+                : $this->perBatchJobs($register, $batches);
+
+            if (collect($pending)->contains(fn (array $job): bool => (int) $job['create_vals']['currency_id'] !== (int) $register->currency_id)) {
+                throw new InvalidArgumentException('Payment batches in different currencies require separate instructions.');
+            }
+            $plannedAmount = array_sum(array_column(array_column($pending, 'create_vals'), 'amount'));
+            if ($register->currency->compareAmounts($plannedAmount, $register->amount) !== 0) {
+                throw new InvalidArgumentException('Payment batches must total the requested amount; partial batch allocation is not supported.');
+            }
+
+            $this->createPayments($register, $pending, $editMode);
+
+            $this->postPayments($pending);
+
+            $this->reconcilePayments($pending);
+
+            $paymentIds = collect($pending)->pluck('payment.id')->map(fn ($id): int => (int) $id)->all();
+            $connection->table($register->getTable())->where('id', $register->id)->update([
+                'registration_state'       => 'completed',
+                'registration_fingerprint' => $fingerprint,
+                'registered_payment_ids'   => json_encode($paymentIds, JSON_THROW_ON_ERROR),
+                'registered_at'            => now(),
+            ]);
+
+            $moves = $register->lines->map(fn ($line) => $line->move)->unique('id');
+
+            $connection->afterCommit(function () use ($moves): void {
+                foreach ($moves as $move) {
+                    try {
+                        MovePaid::dispatch($move->refresh());
+                    } catch (Throwable $exception) {
+                        report($exception);
+                    }
+                }
+            });
+
+            return $paymentIds;
+        });
+    }
+
+    private function registrationFingerprint(array $attributes, array $lineIds): string
+    {
+        $intent = [];
+        foreach (['company_id', 'partner_id', 'currency_id', 'journal_id', 'partner_bank_id', 'payment_method_line_id',
+            'writeoff_account_id', 'payment_type', 'partner_type', 'payment_difference_handling', 'writeoff_label',
+            'payment_date', 'amount', 'communication', 'installments_mode', 'group_payment', 'payment_token_id'] as $field) {
+            $value = $attributes[$field] ?? null;
+            if ($field === 'amount' && $value !== null && is_numeric($value)) {
+                $value = bcadd((string) $value, '0', 4);
+            } elseif ($field === 'group_payment' && $value !== null) {
+                $value = (int) (bool) $value;
+            }
+            $intent[$field] = $value === null ? null : (string) $value;
+        }
+        $intent['lines'] = array_map('intval', $lineIds);
+        sort($intent['lines']);
+
+        return hash('sha256', json_encode($intent, JSON_THROW_ON_ERROR));
+    }
+
+    public function replayRequest(AccountMove $move, ?string $key, array $intent): ?array
+    {
+        if ($key === null) {
+            return null;
+        }
+        $this->validateRequestKey($key);
+        Gate::authorize('create', Payment::class);
+        if (! in_array((int) $move->company_id, app(CompanyContext::class)->activeIds(), true)) {
+            throw new AuthorizationException('Payment request is outside the active company scope.');
+        }
+        $register = PaymentRegister::query()->where('company_id', $move->company_id)->where('request_key', $key)->first();
+        if (! $register) {
+            return null;
+        }
+        if ($register->request_fingerprint !== $this->requestFingerprint($move, $intent)) {
+            throw new InvalidArgumentException('Payment request key was already used for a different instruction.');
+        }
+
+        return $this->register($register);
+    }
+
+    public function registerForMove(AccountMove $move, array $paymentData, array $lineIds, ?string $key, array $intent): array
+    {
+        $connection = (new PaymentRegister)->getConnection();
+
+        return $connection->transaction(function () use ($connection, $move, $paymentData, $lineIds, $key, $intent): array {
+            Gate::authorize('create', Payment::class);
+            if (! in_array((int) $move->company_id, app(CompanyContext::class)->activeIds(), true)) {
+                throw new AuthorizationException('Payment request is outside the active company scope.');
+            }
+            $lineIds = array_values(array_unique(array_map('intval', $lineIds)));
+            if ($lineIds === [] || MoveLine::query()->whereKey($lineIds)->where('move_id', $move->id)->where('company_id', $move->company_id)->count() !== count($lineIds)) {
+                throw new InvalidArgumentException('Payment source lines must belong to the requested move and company.');
+            }
+            if ($key !== null) {
+                $this->validateRequestKey($key);
+                $connection->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ['accounts.payment:'.$move->company_id.':'.$key]);
+                $saved = $connection->table('accounts_payment_registers')->where('company_id', $move->company_id)->where('request_key', $key)->first();
+                if ($saved && $this->registrationFingerprint([...((array) $saved), ...$paymentData], $lineIds) !== $saved->registration_fingerprint) {
+                    throw new InvalidArgumentException('Payment request arguments conflict with the completed instruction.');
+                }
+                $existing = $this->replayRequest($move, $key, $intent);
+                if ($existing !== null) {
+                    return $existing;
+                }
+            }
+            $register = PaymentRegister::create([...$paymentData, 'company_id' => $move->company_id]);
+            $register->lines()->sync($lineIds);
+            $register->refresh();
+            $register->computeFromLines();
+            $register->save();
+            if ($key !== null) {
+                $register->forceFill([
+                    'request_key'         => $key,
+                    'request_fingerprint' => $this->requestFingerprint($move, $intent),
+                ])->save();
+            }
+
+            return $this->register($register);
+        });
+    }
+
+    private function validateRequestKey(string $key): void
+    {
+        if (! preg_match('/\A[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\z/', $key)) {
+            throw new InvalidArgumentException('Payment request key must contain 1 to 128 ASCII letters, digits, dots, colons, underscores or hyphens.');
+        }
+    }
+
+    private function requestFingerprint(AccountMove $move, array $intent): string
+    {
+        unset($intent['idempotency_key']);
+        ksort($intent);
+
+        return hash('sha256', json_encode(['move_id' => $move->id, 'intent' => $intent], JSON_THROW_ON_ERROR));
     }
 
     protected function payableBatches(PaymentRegister $register): array
@@ -90,7 +290,7 @@ class PaymentRegistrar
                         'payment_values' => array_merge($batch['payment_values'], [
                             'payment_type' => $line->balance > 0 ? PaymentType::RECEIVE : PaymentType::SEND,
                         ]),
-                        'lines' => $line,
+                        'lines' => collect([$line]),
                     ])))
                 ->all();
         }
@@ -178,7 +378,7 @@ class PaymentRegistrar
             'company_id'             => $register->company_id,
             'currency_id'            => $values['source_currency_id'],
             'partner_id'             => $values['partner_id'],
-            'payment_method_line_id' => $paymentMethodLine,
+            'payment_method_line_id' => $paymentMethodLine?->id,
             'destination_account_id' => $batch['lines'][0]->account_id,
             'write_off_line_vals'    => [],
         ];

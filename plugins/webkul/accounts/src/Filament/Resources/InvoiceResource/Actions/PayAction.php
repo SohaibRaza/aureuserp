@@ -16,16 +16,19 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\HtmlString;
+use Illuminate\Support\Str;
 use Livewire\Component;
 use Throwable;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\PaymentState;
 use Webkul\Account\Enums\PaymentType;
-use Webkul\Account\Facades\Account as AccountFacade;
 use Webkul\Account\Models\Move;
+use Webkul\Account\Models\Payment;
 use Webkul\Account\Models\PaymentMethodLine;
 use Webkul\Account\Models\PaymentRegister;
+use Webkul\Account\Services\PaymentRegistrar;
 use Webkul\Accounting\Models\Journal;
 
 class PayAction extends Action
@@ -100,6 +103,7 @@ class PayAction extends Action
                 }
 
                 return $schema->components([
+                    Hidden::make('idempotency_key')->default(fn (): string => (string) Str::uuid())->required(),
                     Group::make()
                         ->schema([
                             Select::make('journal_id')
@@ -307,22 +311,16 @@ class PayAction extends Action
             })
             ->action(function (Move $record, $data, Component $livewire): void {
                 try {
-                    $lineIds = $record->paymentTermLines
-                        ->filter(fn ($line) => ! $line->reconciled)
-                        ->pluck('id')
-                        ->toArray();
+                    if (app(PaymentRegistrar::class)->replayRequest($record, $data['idempotency_key'], $data) === null) {
+                        $lineIds = $record->paymentTermLines
+                            ->filter(fn ($line) => ! $line->reconciled)
+                            ->pluck('id')
+                            ->toArray();
 
-                    $paymentRegister = PaymentRegister::create($data);
-
-                    $paymentRegister->lines()->sync($lineIds);
-
-                    $paymentRegister->refresh();
-
-                    $paymentRegister->computeFromLines();
-
-                    $paymentRegister->save();
-
-                    AccountFacade::createPayments($paymentRegister);
+                        app(PaymentRegistrar::class)->registerForMove(
+                            $record, $data, $lineIds, $data['idempotency_key'], $data,
+                        );
+                    }
 
                     $record->refresh();
 
@@ -341,7 +339,8 @@ class PayAction extends Action
                 }
             })
             ->hidden(function (Move $record) {
-                return $record->state != MoveState::POSTED
+                return ! Gate::allows('create', Payment::class)
+                    || $record->state != MoveState::POSTED
                     || ! in_array($record->payment_state, [
                         PaymentState::NOT_PAID,
                         PaymentState::PARTIAL,

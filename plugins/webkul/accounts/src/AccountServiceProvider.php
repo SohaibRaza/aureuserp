@@ -143,6 +143,7 @@ class AccountServiceProvider extends PackageServiceProvider
                 '2026_09_10_000005_include_quarantined_reconciliation_import_hashes',
                 '2026_09_10_000006_protect_reconciliation_audit_events',
                 '2026_09_11_000001_seed_reconciliation_accounts',
+                '2026_09_24_200000_add_payment_registration_results',
             ])
             ->runsMigrations()
             ->hasSettings([

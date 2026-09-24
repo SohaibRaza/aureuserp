@@ -3,6 +3,7 @@
 namespace Webkul\Account\Http\Controllers\API\V1;
 
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Knuckles\Scribe\Attributes\Authenticated;
@@ -25,6 +26,7 @@ use Webkul\Account\Http\Requests\MovePaymentRequest;
 use Webkul\Account\Http\Resources\V1\MoveResource;
 use Webkul\Account\Models\PaymentRegister;
 use Webkul\Account\Models\Refund;
+use Webkul\Account\Services\PaymentRegistrar;
 use Webkul\Accounting\Models\Journal;
 
 #[Group('Account API Management')]
@@ -320,6 +322,16 @@ class RefundController extends Controller
 
         Gate::authorize('update', $refund);
 
+        try {
+            if (($paymentIds = app(PaymentRegistrar::class)->replayRequest($refund, $request->validated('idempotency_key'), $request->validated())) !== null) {
+                return (new MoveResource($refund->refresh()))->additional(['message' => 'Payment request already registered.', 'payment_ids' => $paymentIds]);
+            }
+        } catch (AuthorizationException $exception) {
+            throw $exception;
+        } catch (Exception $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
         if (
             $refund->state !== MoveState::POSTED
             || ! in_array($refund->payment_state, [PaymentState::NOT_PAID, PaymentState::PARTIAL, PaymentState::IN_PAYMENT], true)
@@ -342,6 +354,8 @@ class RefundController extends Controller
 
         try {
             $paymentData = $this->preparePaymentData($refund, $request->validated());
+        } catch (AuthorizationException $exception) {
+            throw $exception;
         } catch (Exception $exception) {
             return response()->json([
                 'message' => $exception->getMessage(),
@@ -355,19 +369,11 @@ class RefundController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($paymentData, $lineIds) {
-                $paymentRegister = PaymentRegister::create($paymentData);
-
-                $paymentRegister->lines()->sync($lineIds);
-
-                $paymentRegister->refresh();
-
-                $paymentRegister->computeFromLines();
-
-                $paymentRegister->save();
-
-                AccountFacade::createPayments($paymentRegister);
-            });
+            $paymentIds = app(PaymentRegistrar::class)->registerForMove(
+                $refund, $paymentData, $lineIds, $request->validated('idempotency_key'), $request->validated(),
+            );
+        } catch (AuthorizationException $exception) {
+            throw $exception;
         } catch (Exception $exception) {
             return response()->json([
                 'message' => $exception->getMessage(),
@@ -375,7 +381,7 @@ class RefundController extends Controller
         }
 
         return (new MoveResource($refund->refresh()))
-            ->additional(['message' => 'Refund payment registered successfully.']);
+            ->additional(['message' => 'Refund payment registered successfully.', 'payment_ids' => $paymentIds]);
     }
 
     #[Endpoint('Reset refund to draft', 'Reset a posted or cancelled refund to draft')]

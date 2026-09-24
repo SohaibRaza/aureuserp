@@ -3,6 +3,7 @@
 namespace Webkul\Account\Http\Controllers\API\V1;
 
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -28,6 +29,7 @@ use Webkul\Account\Http\Resources\V1\MoveResource;
 use Webkul\Account\Models\Bill;
 use Webkul\Account\Models\MoveReversal;
 use Webkul\Account\Models\PaymentRegister;
+use Webkul\Account\Services\PaymentRegistrar;
 use Webkul\Accounting\Models\Journal;
 
 #[Group('Account API Management')]
@@ -323,6 +325,16 @@ class BillController extends Controller
 
         Gate::authorize('update', $invoice);
 
+        try {
+            if (($paymentIds = app(PaymentRegistrar::class)->replayRequest($invoice, $request->validated('idempotency_key'), $request->validated())) !== null) {
+                return (new MoveResource($invoice->refresh()))->additional(['message' => 'Payment request already registered.', 'payment_ids' => $paymentIds]);
+            }
+        } catch (AuthorizationException $exception) {
+            throw $exception;
+        } catch (Exception $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
         if (
             $invoice->state !== MoveState::POSTED
             || ! in_array($invoice->payment_state, [PaymentState::NOT_PAID, PaymentState::PARTIAL, PaymentState::IN_PAYMENT], true)
@@ -345,6 +357,8 @@ class BillController extends Controller
 
         try {
             $paymentData = $this->preparePaymentData($invoice, $request->validated());
+        } catch (AuthorizationException $exception) {
+            throw $exception;
         } catch (Exception $exception) {
             return response()->json([
                 'message' => $exception->getMessage(),
@@ -358,19 +372,11 @@ class BillController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($paymentData, $lineIds) {
-                $paymentRegister = PaymentRegister::create($paymentData);
-
-                $paymentRegister->lines()->sync($lineIds);
-
-                $paymentRegister->refresh();
-
-                $paymentRegister->computeFromLines();
-
-                $paymentRegister->save();
-
-                AccountFacade::createPayments($paymentRegister);
-            });
+            $paymentIds = app(PaymentRegistrar::class)->registerForMove(
+                $invoice, $paymentData, $lineIds, $request->validated('idempotency_key'), $request->validated(),
+            );
+        } catch (AuthorizationException $exception) {
+            throw $exception;
         } catch (Exception $exception) {
             return response()->json([
                 'message' => $exception->getMessage(),
@@ -378,7 +384,7 @@ class BillController extends Controller
         }
 
         return (new MoveResource($invoice->refresh()))
-            ->additional(['message' => 'Bill payment registered successfully.']);
+            ->additional(['message' => 'Bill payment registered successfully.', 'payment_ids' => $paymentIds]);
     }
 
     #[Endpoint('Reverse bill', 'Create a vendor refund by reversing a posted bill')]
