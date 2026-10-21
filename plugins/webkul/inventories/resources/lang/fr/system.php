@@ -2,6 +2,16 @@
 
 return [
     'inventory-manager' => [
+        'result-immutable'    => 'Le résultat enregistré d’un transfert ne peut être ni modifié ni supprimé.',
+        'replay-conflict'     => 'Ce transfert est déjà terminé avec d’autres instructions. Consultez son résultat enregistré avant de continuer.',
+        'legacy-terminal'     => 'Ce transfert est déjà clôturé, mais aucun résultat d’exécution n’est enregistré. Demandez au responsable des stocks de le vérifier.',
+        'terminal-change'     => 'Les mouvements de stock terminés ou annulés ne peuvent être ni modifiés ni supprimés. Utilisez un retour ou une correction approuvée.',
+        'canceled-completion' => 'Un mouvement de stock annulé ne peut pas être terminé. Créez un nouveau mouvement si le stock doit encore être déplacé.',
+        'stock-not-ready'     => 'Le stock réservé n’est plus disponible à ce lieu de chargement. Recomptez les marchandises et mettez le chargement à jour avant la sortie de stock.',
+        'invalid-counts'      => 'Vérifiez les quantités comptées et rechargez le transfert. Les quantités des lignes existantes doivent être finies et positives ou nulles.',
+
+        'stale-operation' => 'Ce transfert a changé pendant votre travail. Rechargez-le et réessayez.',
+
         'check-availability' => [
             'no-moves' => 'Rien à vérifier pour la disponibilité.',
         ],
@@ -11,7 +21,7 @@ return [
         ],
 
         'unreserve-move' => [
-            'already-done' => "Vous ne pouvez pas annuler la réservation d'un mouvement de stock défini sur 'Terminé'.",
+            'already-done' => 'Vous ne pouvez pas annuler la réservation d\'un mouvement de stock défini sur \'Terminé\'.',
         ],
 
         'validate' => [
@@ -27,18 +37,32 @@ return [
         ],
 
         'return' => [
-            'origin' => 'Retour de :operation_name',
+            'origin'               => 'Retour de :operation_name',
+            'completed-only'       => 'Seul un transfert terminé peut faire l’objet d’un retour.',
+            'missing-source-moves' => 'Un retour nécessite des quantités issues de mouvements sources existants.',
+            'positive-quantity'    => 'Les quantités retournées doivent être positives.',
+            'quantity-exceeded'    => 'La quantité retournée dépasse la quantité terminée disponible pour un retour.',
         ],
     ],
 
     'move-line' => [
         'negative-quantity-not-allowed' => 'La réservation d\'une quantité négative n\'est pas autorisée.',
+        'stale-line'                    => 'La ligne du mouvement de stock a changé. Rechargez-la avant de l’enregistrer ou de la supprimer.',
+        'connection-mismatch'           => 'Les lignes de mouvement doivent utiliser la connexion à la base de données Stocks.',
     ],
 
     'product-quantity' => [
         'quantity-not-set'                 => 'La quantité ou la quantité réservée doit être définie.',
         'removal-strategy-not-implemented' => 'La stratégie de retrait :strategy n\'est pas implémentée.',
         'unreserve-more-than-stock'        => 'Il n\'est pas possible d\'annuler la réservation de plus de produits :name que vous n\'en avez en stock.',
+        'reservation-out-of-bounds'        => 'La réservation dépasse le stock disponible ou libère plus que la quantité réservée.',
+        'stale-count'                      => 'Le stock a changé après la saisie de ce comptage. Recomptez avant d’appliquer l’ajustement.',
+        'duplicate-identity'               => 'Une quantité existe déjà pour cette combinaison d’entreprise, produit, emplacement, lot, colis et propriétaire du stock.',
+    ],
+
+    'scrap' => [
+        'done-update' => 'Les rebuts terminés ne peuvent pas être modifiés.',
+        'done-delete' => 'Les rebuts terminés ne peuvent pas être supprimés.',
     ],
 
     'product' => [

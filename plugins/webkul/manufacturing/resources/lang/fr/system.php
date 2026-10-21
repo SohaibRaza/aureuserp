@@ -2,6 +2,9 @@
 
 return [
     'manufacturing-manager' => [
+        'complete-order' => [
+            'only-active' => 'Seul un ordre de fabrication actif peut être terminé.',
+        ],
         'unplan-order' => [
             'work-orders-already-done'    => "Certains ordres de travail sont déjà terminés, vous ne pouvez donc pas déplanifier cet ordre de fabrication.\n\nCe serait dommage de gâcher tout ce progrès, n'est-ce pas ?",
             'work-orders-already-started' => "Certains ordres de travail ont déjà démarré, vous ne pouvez donc pas déplanifier cet ordre de fabrication.\n\nCe serait dommage de gâcher tout ce progrès, n'est-ce pas ?",
@@ -10,7 +13,7 @@ return [
 
     'work-center-productivity-log' => [
         'time-tracking'                    => 'Suivi du temps : :name',
-        'no-performance-productivity-loss' => "Vous devez définir au moins une perte de productivité non archivée dans la catégorie 'Performance'. Créez-la depuis les paramètres de configuration.",
+        'no-performance-productivity-loss' => 'Vous devez définir au moins une perte de productivité non archivée dans la catégorie \'Performance\'. Créez-la depuis les paramètres de configuration.',
     ],
 
     'work-center' => [
@@ -21,8 +24,8 @@ return [
         'unblock-work-center'        => 'Veuillez débloquer le poste de travail pour démarrer l\'ordre de travail.',
         'already-done-or-cancelled'  => 'Vous ne pouvez pas démarrer un ordre de travail déjà terminé ou annulé',
         'no-calendar-on-work-center' => 'Aucun calendrier n\'est défini sur le poste de travail :name.',
-        'no-productivity-loss'       => "Vous devez définir au moins une perte de productivité dans la catégorie 'Productivité'. Créez les paramètres de configuration.",
-        'no-performance-loss'        => "Vous devez définir au moins une perte de productivité dans la catégorie 'Performance'. Créez les paramètres de configuration.",
+        'no-productivity-loss'       => 'Vous devez définir au moins une perte de productivité dans la catégorie \'Productivité\'. Créez les paramètres de configuration.',
+        'no-performance-loss'        => 'Vous devez définir au moins une perte de productivité dans la catégorie \'Performance\'. Créez les paramètres de configuration.',
         'impossible-to-plan'         => 'Impossible de planifier l\'ordre de travail. Veuillez vérifier les disponibilités du poste de travail.',
     ],
 

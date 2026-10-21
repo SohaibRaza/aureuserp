@@ -288,6 +288,13 @@ return [
     ],
 
     'summary' => [
+        'notifications' => [
+            'match-failed'        => 'Impossible de rapprocher le paiement',
+            'remove-failed'       => 'Impossible de retirer le rapprochement du paiement',
+            'payment-unavailable' => 'Ce paiement n’est plus disponible pour cette facture. Actualisez et choisissez un paiement en attente.',
+            'match-unavailable'   => 'Ce rapprochement de paiement n’est plus disponible pour cette facture. Actualisez et réessayez.',
+        ],
+
         'actions' => [
             'reconcile' => [
                 'label' => 'Ajouter',

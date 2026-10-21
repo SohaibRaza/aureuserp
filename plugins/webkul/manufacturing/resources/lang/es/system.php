@@ -2,6 +2,9 @@
 
 return [
     'manufacturing-manager' => [
+        'complete-order' => [
+            'only-active' => 'Solo se pueden completar órdenes de fabricación activas.',
+        ],
         'unplan-order' => [
             'work-orders-already-done'    => "Algunas órdenes de trabajo ya están hechas, por lo que no se puede desplanificar esta orden de fabricación.\n\nSería una pena desperdiciar todo ese progreso, ¿verdad?",
             'work-orders-already-started' => "Algunas órdenes de trabajo ya han comenzado, por lo que no se puede desplanificar esta orden de fabricación.\n\nSería una pena desperdiciar todo ese progreso, ¿verdad?",
@@ -10,7 +13,7 @@ return [
 
     'work-center-productivity-log' => [
         'time-tracking'                    => 'Seguimiento de tiempo: :name',
-        'no-performance-productivity-loss' => "Debe definir al menos una pérdida de productividad sin archivar en la categoría 'Rendimiento'. Créela desde la configuración.",
+        'no-performance-productivity-loss' => 'Debe definir al menos una pérdida de productividad sin archivar en la categoría \'Rendimiento\'. Créela desde la configuración.',
     ],
 
     'work-center' => [
@@ -21,8 +24,8 @@ return [
         'unblock-work-center'        => 'Desbloquee el centro de trabajo para iniciar la orden de trabajo.',
         'already-done-or-cancelled'  => 'No se puede iniciar una orden de trabajo que ya está hecha o cancelada',
         'no-calendar-on-work-center' => 'No hay ningún calendario definido en el centro de trabajo :name.',
-        'no-productivity-loss'       => "Debe definir al menos una pérdida de productividad en la categoría 'Productividad'. Créela desde la configuración.",
-        'no-performance-loss'        => "Debe definir al menos una pérdida de productividad en la categoría 'Rendimiento'. Créela desde la configuración.",
+        'no-productivity-loss'       => 'Debe definir al menos una pérdida de productividad en la categoría \'Productividad\'. Créela desde la configuración.',
+        'no-performance-loss'        => 'Debe definir al menos una pérdida de productividad en la categoría \'Rendimiento\'. Créela desde la configuración.',
         'impossible-to-plan'         => 'Imposible planificar la orden de trabajo. Compruebe la disponibilidad del centro de trabajo.',
     ],
 

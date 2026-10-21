@@ -288,6 +288,13 @@ return [
     ],
 
     'summary' => [
+        'notifications' => [
+            'match-failed'        => 'No se pudo conciliar el pago',
+            'remove-failed'       => 'No se pudo quitar la conciliación del pago',
+            'payment-unavailable' => 'Este pago ya no está disponible para esta factura. Actualice y elija un pago pendiente.',
+            'match-unavailable'   => 'Esta conciliación de pago ya no está disponible para esta factura. Actualice e inténtelo de nuevo.',
+        ],
+
         'actions' => [
             'reconcile' => [
                 'label' => 'Agregar',

@@ -17,7 +17,7 @@ return [
     'form' => [
         'section' => [
             'general' => [
-                'title' => 'Geral',
+                'title'  => 'Geral',
 
                 'fields' => [
                     'customer-invoice' => 'Fatura de cliente',
@@ -64,11 +64,11 @@ return [
             ],
 
             'other-information' => [
-                'title' => 'Outras informações',
+                'title'    => 'Outras informações',
 
                 'fieldset' => [
                     'invoice' => [
-                        'title' => 'Fatura',
+                        'title'  => 'Fatura',
 
                         'fields' => [
                             'customer-reference' => 'Referência do cliente',
@@ -232,11 +232,11 @@ return [
             ],
 
             'other-information' => [
-                'title' => 'Outras informações',
+                'title'    => 'Outras informações',
 
                 'fieldset' => [
                     'invoice' => [
-                        'title' => 'Fatura',
+                        'title'   => 'Fatura',
 
                         'entries' => [
                             'customer-reference' => 'Referência do cliente',
@@ -288,6 +288,13 @@ return [
     ],
 
     'summary' => [
+        'notifications' => [
+            'match-failed'        => 'Não foi possível conciliar o pagamento',
+            'remove-failed'       => 'Não foi possível remover a conciliação do pagamento',
+            'payment-unavailable' => 'Este pagamento não está mais disponível para esta fatura. Atualize e escolha um pagamento pendente.',
+            'match-unavailable'   => 'Esta conciliação de pagamento não está mais disponível para esta fatura. Atualize e tente novamente.',
+        ],
+
         'actions' => [
             'reconcile' => [
                 'label' => 'Adicionar',

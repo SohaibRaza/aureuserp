@@ -2,6 +2,16 @@
 
 return [
     'inventory-manager' => [
+        'result-immutable'    => 'O resultado salvo de uma transferência não pode ser alterado nem excluído.',
+        'replay-conflict'     => 'Esta transferência já terminou com outras instruções. Revise o resultado salvo antes de continuar.',
+        'legacy-terminal'     => 'Esta transferência já está encerrada, mas não tem resultado de execução salvo. Peça ao responsável pelo estoque para revisá-la.',
+        'terminal-change'     => 'Registros de estoque concluídos ou cancelados não podem ser alterados nem excluídos. Use uma devolução ou correção aprovada.',
+        'canceled-completion' => 'Movimentos de estoque cancelados não podem ser concluídos. Crie outro movimento se ainda precisar mover o estoque.',
+        'stock-not-ready'     => 'O estoque reservado não está mais disponível neste local de carga. Reconte as mercadorias e atualize a carga antes de dar saída no estoque.',
+        'invalid-counts'      => 'Confira as quantidades contadas e recarregue a transferência. Devem ser quantidades finitas e não negativas das linhas existentes.',
+
+        'stale-operation' => 'Esta transferência mudou enquanto você trabalhava. Recarregue-a e tente novamente.',
+
         'check-availability' => [
             'no-moves' => 'Nada para verificar disponibilidade.',
         ],
@@ -27,18 +37,32 @@ return [
         ],
 
         'return' => [
-            'origin' => 'Devolução de :operation_name',
+            'origin'               => 'Devolução de :operation_name',
+            'completed-only'       => 'Somente transferências concluídas podem ser devolvidas.',
+            'missing-source-moves' => 'Uma devolução exige quantidades de movimentos de origem existentes.',
+            'positive-quantity'    => 'As quantidades devolvidas devem ser positivas.',
+            'quantity-exceeded'    => 'A quantidade devolvida supera a quantidade concluída disponível para devolução.',
         ],
     ],
 
     'move-line' => [
         'negative-quantity-not-allowed' => 'Não é permitido reservar uma quantidade negativa.',
+        'stale-line'                    => 'A linha do movimento de estoque mudou. Recarregue-a antes de salvar ou excluir.',
+        'connection-mismatch'           => 'As linhas dos movimentos devem usar a conexão do banco de dados de Estoque.',
     ],
 
     'product-quantity' => [
         'quantity-not-set'                 => 'Quantidade ou quantidade reservada deve ser definida.',
         'removal-strategy-not-implemented' => 'Estratégia de remoção :strategy não implementada.',
         'unreserve-more-than-stock'        => 'Não é possível cancelar a reserva de mais produtos de :name do que você tem em estoque.',
+        'reservation-out-of-bounds'        => 'A reserva supera o estoque disponível ou libera mais do que a quantidade reservada.',
+        'stale-count'                      => 'O estoque mudou após este registro de contagem. Reconte antes de aplicar o ajuste.',
+        'duplicate-identity'               => 'Já existe uma quantidade para esta combinação de empresa, produto, local, lote, pacote e proprietário do estoque.',
+    ],
+
+    'scrap' => [
+        'done-update' => 'Descartes concluídos não podem ser alterados.',
+        'done-delete' => 'Descartes concluídos não podem ser excluídos.',
     ],
 
     'product' => [

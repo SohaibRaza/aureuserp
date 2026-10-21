@@ -2,6 +2,9 @@
 
 return [
     'manufacturing-manager' => [
+        'complete-order' => [
+            'only-active' => 'Somente ordens de fabricação ativas podem ser concluídas.',
+        ],
         'unplan-order' => [
             'work-orders-already-done'    => 'Algumas ordens de trabalho já foram concluídas, portanto não é possível remover o planejamento desta ordem de produção.',
             'work-orders-already-started' => 'Algumas ordens de trabalho já foram iniciadas, portanto não é possível remover o planejamento desta ordem de produção.',
