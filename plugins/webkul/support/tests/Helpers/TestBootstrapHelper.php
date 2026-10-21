@@ -16,8 +16,6 @@ class TestBootstrapHelper
 {
     private const BOOTSTRAP_CONNECTION = 'test_bootstrap';
 
-    private const FRESH_BOOTSTRAP_PLUGINS = ['products', 'accounts'];
-
     private static bool $isERPInstalled = false;
 
     private static array $installedPlugins = [];
@@ -362,32 +360,14 @@ class TestBootstrapHelper
                 $coreNames[] = $package->shortName();
             }
 
-            if (! in_array($package->shortName(), self::FRESH_BOOTSTRAP_PLUGINS, true)) {
-                continue;
-            }
-
-            $pluginRoot = static::pluginRootPath($package->shortName());
-            if (! $pluginRoot) {
-                continue;
-            }
-
-            foreach ($package->migrationFileNames as $migration) {
-                $path = "{$pluginRoot}/database/migrations/{$migration}.php";
-
-                if (file_exists($path)) {
-                    $paths[] = $path;
-                }
-            }
         }
 
-        $allowedNames = array_merge($coreNames, self::FRESH_BOOTSTRAP_PLUGINS);
-
-        return array_values(array_unique(array_filter($paths, function (string $path) use ($allowedNames): bool {
+        return array_values(array_unique(array_filter($paths, function (string $path) use ($coreNames): bool {
             if (! preg_match('#plugins/[^/]+/([^/]+)/#', str_replace('\\', '/', $path), $matches)) {
                 return true;
             }
 
-            return in_array($matches[1], $allowedNames, true);
+            return in_array($matches[1], $coreNames, true);
         })));
     }
 

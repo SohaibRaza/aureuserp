@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
+use RuntimeException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Webkul\PluginManager\Package;
@@ -155,7 +156,9 @@ class InstallERP extends Command
         $this->info('🗑️  Wiping database...');
 
         try {
-            Artisan::call('migrate:fresh', [], $this->getOutput());
+            if (Artisan::call('migrate:fresh', ['--force' => true, '--no-interaction' => true], $this->getOutput()) !== self::SUCCESS) {
+                throw new RuntimeException('Database reset failed.');
+            }
             $this->info('✅ Database wiped successfully.');
         } catch (Exception $e) {
             $this->error('❌ Failed to wipe database: '.$e->getMessage());
@@ -200,7 +203,9 @@ class InstallERP extends Command
     {
         $this->info('⚙️ Running database migrations...');
 
-        Artisan::call('migrate', [], $this->getOutput());
+        if (Artisan::call('migrate', ['--force' => (bool) $this->option('force'), '--no-interaction' => true], $this->getOutput()) !== self::SUCCESS) {
+            throw new RuntimeException('Database migrations failed. Installation cannot continue.');
+        }
 
         $this->info('✅ Migrations completed successfully.');
     }

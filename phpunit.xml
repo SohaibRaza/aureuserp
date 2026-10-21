@@ -5,6 +5,9 @@
          colors="true"
 >
     <testsuites>
+        <testsuite name="ReconciliationFeature">
+            <directory>tests/Feature/Recon</directory>
+        </testsuite>
         <testsuite name="LogisticsFeature">
             <directory>plugins/shafique/logistics/tests/Feature</directory>
         </testsuite>

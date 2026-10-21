@@ -1,7 +1,7 @@
 # Bank Reconciliation Architecture
 
 **Status:** Current implementation map
-**Updated:** 2026-09-15
+**Updated:** 2026-10-21
 
 ## Boundaries
 
@@ -31,6 +31,8 @@
 | `BankOpeningBalanceService` | Authorized initial bank/equity entry and immutable provenance |
 
 ## Core records
+
+The Accounts plugin owns the reconciliation schema and its permission migrations under `plugins/webkul/accounts/database/migrations`. Installing the core ERP does not create reconciliation tables. Installing Accounts first installs Products, then runs the Accounts schema and reconciliation migrations in timestamp order. The migrations moved from the application folder retain their original names, so existing development migration records do not run twice. The test bootstrap follows this same installation path instead of preloading Accounts tables.
 
 - `recon_bank_reconciliations`: retained identity, dates, lifecycle, balances, completion/reopen/stale metadata.
 - `recon_import_batches` and statement lines: source/control evidence and normalized bank activity.

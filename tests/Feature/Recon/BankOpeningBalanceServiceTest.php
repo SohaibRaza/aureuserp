@@ -204,7 +204,7 @@ it('keeps opening balance evidence immutable', function (): void {
         ->toThrow(QueryException::class);
     expect(fn () => DB::transaction(fn () => DB::table('recon_bank_opening_balances')->where('id', $opening->id)->delete()))
         ->toThrow(QueryException::class);
-    $migration = require base_path('database/migrations/2026_09_11_000001_create_recon_bank_opening_balances_table.php');
+    $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_09_11_000001_create_recon_bank_opening_balances_table.php');
     expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
     expect(DB::table('recon_bank_opening_balances')->where('id', $opening->id)->exists())->toBeTrue();
 

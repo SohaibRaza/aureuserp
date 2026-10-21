@@ -8,6 +8,16 @@ permissions:
 jobs:
   pest_tests:
     runs-on: ${{ matrix.operating-systems }}
+    timeout-minutes: 20
+
+    env:
+      DB_CONNECTION: ${{ matrix.db }}
+      DB_HOST: 127.0.0.1
+      DB_PORT: ${{ matrix.db-port }}
+      DB_DATABASE: aureuserp_testing
+      DB_USERNAME: ${{ matrix.db-user }}
+      DB_PASSWORD: ${{ matrix.db-password }}
+      AUREUSERP_RUN_CONCURRENCY_TEST: 1
 
     strategy:
       fail-fast: false
@@ -31,7 +41,7 @@ jobs:
             db-port: 5432
             db-user: postgres
             db-password: postgres
-            db-health: pg_isready
+            db-health: pg_isready -U postgres
             php-db-ext: pdo_pgsql
 
     name: PHP ${{ matrix.php-versions }} | ${{ matrix.db-label }} test on ${{ matrix.operating-systems }}
@@ -41,10 +51,10 @@ jobs:
         image: ${{ matrix.db-image }}
         env:
           MYSQL_ROOT_PASSWORD: ${{ matrix.db-password }}
-          MYSQL_DATABASE: aureuserp
+          MYSQL_DATABASE: aureuserp_testing
           POSTGRES_USER: ${{ matrix.db-user }}
           POSTGRES_PASSWORD: ${{ matrix.db-password }}
-          POSTGRES_DB: aureuserp
+          POSTGRES_DB: aureuserp_testing
         ports:
           - ${{ matrix.db-port }}:${{ matrix.db-port }}
         options: --health-cmd="${{ matrix.db-health }}" --health-interval=10s --health-timeout=5s --health-retries=5
@@ -71,11 +81,9 @@ jobs:
           sed -i "s|^\(DB_CONNECTION=\s*\).*$|\1${{ matrix.db }}|" .env
           sed -i "s|^#\?\s*DB_HOST=.*|DB_HOST=127.0.0.1|" .env
           sed -i "s|^#\?\s*DB_PORT=.*|DB_PORT=${{ matrix.db-port }}|" .env
-          sed -i "s|^#\?\s*DB_DATABASE=.*|DB_DATABASE=aureuserp|" .env
+          sed -i "s|^#\?\s*DB_DATABASE=.*|DB_DATABASE=aureuserp_testing|" .env
           sed -i "s|^#\?\s*DB_USERNAME=.*|DB_USERNAME=${{ matrix.db-user }}|" .env
           sed -i "s|^#\?\s*DB_PASSWORD=.*|DB_PASSWORD=${{ matrix.db-password }}|" .env
-          echo "=== Final .env configuration ==="
-          cat .env
 
       - name: Generating Application Key
         run: php artisan key:generate
@@ -84,9 +92,10 @@ jobs:
         run: |
           php artisan erp:install \
             --force \
+            --no-interaction \
             --admin-name="Example" \
             --admin-email="admin@example.com" \
             --admin-password="admin123"
 
       - name: Running Pest Test
-        run: vendor/bin/pest --colors=always
+        run: vendor/bin/pest --colors=always --stop-on-defect

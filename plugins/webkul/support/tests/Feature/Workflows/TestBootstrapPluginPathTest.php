@@ -2,7 +2,47 @@
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
 use Webkul\Account\Settings\DefaultAccountSettings;
+use Webkul\PluginManager\Console\Commands\InstallERP;
+
+it('stops ERP installation when the migration command reports failure', function (): void {
+    $artisan = Artisan::getFacadeRoot();
+    $command = new InstallERP;
+    $command->setLaravel(app());
+    $input = new ArrayInput(['--force' => true]);
+    $input->setInteractive(false);
+
+    try {
+        Artisan::shouldReceive('call')->once()
+            ->with('migrate', ['--force' => true, '--no-interaction' => true], Mockery::any())
+            ->andReturn(1);
+
+        expect(fn () => $command->run($input, new BufferedOutput))
+            ->toThrow(RuntimeException::class, 'Database migrations failed. Installation cannot continue.');
+    } finally {
+        Artisan::swap($artisan);
+    }
+});
+
+it('installs reconciliation migrations through Accounts after the core ERP schema', function (): void {
+    TestBootstrapHelper::ensurePluginInstalled('accounts');
+
+    expect(Schema::hasTable('accounts_journals'))->toBeTrue()
+        ->and(Schema::hasTable('recon_bank_opening_balances'))->toBeTrue()
+        ->and(Schema::hasColumn('recon_matches', 'idempotency_fingerprint'))->toBeTrue();
+
+    foreach ([
+        '2026_09_07_000001_create_recon_tables',
+        '2026_09_10_000001_add_accounting_provenance_to_recon_matches',
+        '2026_09_11_000001_create_recon_bank_opening_balances_table',
+        '2026_09_12_000002_protect_bank_opening_balance_evidence',
+    ] as $migration) {
+        expect(DB::table('migrations')->where('migration', $migration)->count())->toBe(1);
+    }
+});
 
 it('resolves Webkul and non-Webkul plugin roots', function (): void {
     $pluginsRoot = sys_get_temp_dir().'/aureuserp-plugin-path-'.bin2hex(random_bytes(8));
@@ -66,7 +106,7 @@ it('does not mark or cache a plugin when its installer fails', function (): void
         expect(fn (): mixed => TestBootstrapHelper::ensurePluginInstalled('accounts'))
             ->toThrow(RuntimeException::class, 'Unable to install required test plugin [accounts].');
 
-        expect(DB::connection('test_bootstrap')->table('plugins')->where('name', 'accounts')->value('is_installed'))
+        expect((bool) DB::connection('test_bootstrap')->table('plugins')->where('name', 'accounts')->value('is_installed'))
             ->toBeFalse()
             ->and($installedPlugins->getValue())
             ->not->toHaveKey('accounts');

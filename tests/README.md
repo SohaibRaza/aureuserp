@@ -2,7 +2,7 @@
 
 The normal feature-test bootstrap intentionally rebuilds and installs the ERP for a clean-room run. That is appropriate for CI, but it is too slow for repeated local focused tests.
 
-The fresh bootstrap creates Products and Accounts tables before other plugin installations. Table existence alone does not mean a plugin is installed: the helper runs the plugin installer when its installation record is missing, so settings and permissions are initialized before the plugin is cached as ready. This keeps combined runs independent of whether Inventory or Accounts tests initialize the database first.
+The fresh bootstrap creates only the core ERP schema. Accounts owns its reconciliation migrations and runs them after its Products dependency and Accounts tables are available. The helper uses the same plugin installer as normal installations; it does not preload Accounts migrations to compensate for installation-order failures. Existing migration names remain unchanged. Table existence alone does not mean a plugin is installed: settings and permissions must also be initialized before the plugin is cached as ready.
 
 Bootstrap failure tests must change installation markers through the helper's committed connection, then restore the marker, static cache and Artisan binding. A marker update inside the normal test transaction is invisible to the installer connection and can block that connection indefinitely.
 

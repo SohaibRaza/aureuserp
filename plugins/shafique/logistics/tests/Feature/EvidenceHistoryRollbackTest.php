@@ -137,9 +137,9 @@ it('rolls back empty PostgreSQL history but refuses MySQL rollback before any DD
             __DIR__.'/../../../../webkul/sales/database/migrations/2026_10_15_000100_create_sales_quantity_commitments_table.php',
             __DIR__.'/../../../../webkul/accounts/database/migrations/2026_09_07_000007_create_reconciliation_snapshots_table.php',
             __DIR__.'/../../../../webkul/accounts/database/migrations/2026_09_10_000006_protect_reconciliation_audit_events.php',
-            base_path('database/migrations/2026_09_12_000002_protect_bank_opening_balance_evidence.php'),
-            base_path('database/migrations/2026_09_11_000001_create_recon_bank_opening_balances_table.php'),
-            base_path('database/migrations/2026_09_07_000001_create_recon_tables.php'),
+            base_path('plugins/webkul/accounts/database/migrations/2026_09_12_000002_protect_bank_opening_balance_evidence.php'),
+            base_path('plugins/webkul/accounts/database/migrations/2026_09_11_000001_create_recon_bank_opening_balances_table.php'),
+            base_path('plugins/webkul/accounts/database/migrations/2026_09_07_000001_create_recon_tables.php'),
         ] as $path) {
             $migration = require $path;
             DB::enableQueryLog();

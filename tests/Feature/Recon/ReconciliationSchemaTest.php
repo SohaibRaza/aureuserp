@@ -155,7 +155,7 @@ it('prevents reconciliation events from being updated or deleted through direct 
         ->toThrow(QueryException::class)
         ->and(fn () => DB::transaction(fn () => DB::table('recon_events')->where('id', $eventId)->delete()))
         ->toThrow(QueryException::class);
-    $migration = require base_path('database/migrations/2026_09_07_000001_create_recon_tables.php');
+    $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_09_07_000001_create_recon_tables.php');
     expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
     expect(DB::table('recon_events')->where('id', $eventId)->value('event'))->toBe('test_event');
 
