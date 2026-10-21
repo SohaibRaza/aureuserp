@@ -4,6 +4,8 @@ The normal feature-test bootstrap intentionally rebuilds and installs the ERP fo
 
 The fresh bootstrap creates only the core ERP schema. Accounts owns its reconciliation migrations and runs them after its Products dependency and Accounts tables are available. The helper uses the same plugin installer as normal installations; it does not preload Accounts migrations to compensate for installation-order failures. Existing migration names remain unchanged. Table existence alone does not mean a plugin is installed: settings and permissions must also be initialized before the plugin is cached as ready.
 
+The Logistics installation test supports both a fresh core database and a database where an earlier test installed Logistics. It verifies the unavailable module before a fresh installation, then checks installation and repeated execution without changing existing operational records or history. It does not require FoundationTest to run first.
+
 Bootstrap failure tests must change installation markers through the helper's committed connection, then restore the marker, static cache and Artisan binding. A marker update inside the normal test transaction is invisible to the installer connection and can block that connection indefinitely.
 
 For disposable PostgreSQL evidence, run `rtk proxy bash scripts/run_logistics_phase2a_tests.sh` followed by the explicit test file paths. Capture the final Pest test and assertion counts, any skipped cases and the PostgreSQL version. A wrapper exit code or the runner's initial isolation message alone does not establish that the suite completed.

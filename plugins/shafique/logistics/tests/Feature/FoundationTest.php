@@ -34,14 +34,18 @@ beforeEach(function (): void {
 
 it('discovers and installs the actual Shafique Logistics package', function (): void {
     expect(app()->getProvider(LogisticsServiceProvider::class))->not->toBeNull();
-    expect(Schema::hasTable('logistics_company_controls'))->toBeFalse()
-        ->and(Filament::getPanel('admin')->getResources())->not->toContain(ModuleSettingResource::class);
-    expect(fn () => app(OperationalControl::class)->read(null, 1))->toThrow(DomainException::class, 'Logistics is not installed.');
+    if (! Schema::hasTable('logistics_company_controls')) {
+        expect(Filament::getPanel('admin')->getResources())->not->toContain(ModuleSettingResource::class);
+        expect(fn () => app(OperationalControl::class)->read(null, 1))->toThrow(DomainException::class, 'Logistics is not installed.');
+    }
 
     TestBootstrapHelper::ensurePluginInstalled('sales');
     TestBootstrapHelper::ensurePluginInstalled('inventories');
     $postingTables = ['sales_orders', 'inventories_moves', 'inventories_move_lines', 'accounts_account_moves', 'accounts_account_payments', 'recon_events'];
     $postingCounts = collect($postingTables)->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all();
+    $controlCounts = collect(['logistics_company_controls', 'logistics_control_changes'])
+        ->mapWithKeys(fn (string $table): array => [$table => Schema::hasTable($table) ? DB::table($table)->count() : 0])
+        ->all();
 
     // The installer changes tables referenced by native stock foreign keys.
     // Release this test's read locks before a separate process performs DDL.
@@ -70,9 +74,8 @@ it('discovers and installs the actual Shafique Logistics package', function (): 
         $process->mustRun();
         (new Process([PHP_BINARY, 'artisan', 'migrate', '--path=plugins/shafique/logistics/database/migrations', '--no-interaction'], base_path()))->setTimeout(60)->mustRun();
         expect([Plugin::query()->count(), DB::table('plugin_dependencies')->count(), Permission::query()->count(), DB::table('migrations')->count()])->toBe($counts)
-            ->and(count(app('events')->getListeners(UninstallingPlugins::class)))->toBe($listeners)
-            ->and(DB::table('logistics_company_controls')->count())->toBe(0)
-            ->and(DB::table('logistics_control_changes')->count())->toBe(0);
+            ->and(count(app('events')->getListeners(UninstallingPlugins::class)))->toBe($listeners);
+        expect(collect(array_keys($controlCounts))->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all())->toBe($controlCounts);
         expect(collect($postingTables)->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all())->toBe($postingCounts);
     } finally {
         DB::beginTransaction();
