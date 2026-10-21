@@ -19,6 +19,7 @@ use App\Services\Recon\StatementImporter;
 use App\Services\Recon\StatementLineTreatment;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Webkul\Account\Models\Account;
 use Webkul\Account\Models\BankStatement;
 use Webkul\Account\Models\Move;
@@ -264,8 +265,13 @@ it('completes atomically with an immutable snapshot and makes later periods stal
     ]);
     $completed = app(ReconciliationLifecycleService::class)->complete($reconciliation->refresh());
     $snapshot = $completed->snapshots()->firstOrFail();
-    expect(fn () => app(MoveWorkflow::class)->resetToDraft(Move::query()->findOrFail($moveId)))
-        ->toThrow(RuntimeException::class, 'completed bank reconciliation');
+    try {
+        app(MoveWorkflow::class)->resetToDraft(Move::query()->findOrFail($moveId));
+        test()->fail('Completed bank reconciliation period allowed a journal reset.');
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toHaveKey('date')
+            ->and($exception->errors()['date'][0])->toContain('completed bank reconciliation');
+    }
     $statementLine->update(['amount' => '999.0000']);
     $reportPage = new ReconReport;
     $reportPage->record = $completed;

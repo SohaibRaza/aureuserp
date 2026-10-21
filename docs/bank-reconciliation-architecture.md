@@ -64,6 +64,9 @@ All material writes follow this order:
 ## Concurrency model
 
 - Source rows and the reconciliation are locked before remaining amounts are accepted.
+- Accounts posting, cancellation, reset, reversal and line reconciliation acquire a shared PostgreSQL transaction advisory lock for their company before checking completed bank periods. Completion acquires the exclusive counterpart before calculating balances and writing its snapshot. The lock exists independently of reconciliation rows, including when a company's first reconciliation is being completed.
+- These locks use immediate acquisition attempts. A competing completion or accounting change causes a validation message asking the user to refresh and retry; it does not wait while holding other row locks. Unrelated accounting changes can hold shared locks together. Locks remain held until the enclosing transaction ends, and these operations require PostgreSQL's READ COMMITTED isolation so checks after acquisition read committed changes.
+- The company lock deliberately covers more than a single bank account. This keeps the protocol small and avoids acquiring several account locks in inconsistent order. Completion can briefly reject an otherwise unrelated posting in the same company; the user can retry after completion ends.
 - Command fingerprints/idempotency keys distinguish a safe retry from a conflicting instruction.
 - Unique constraints prevent duplicate ownership/consumption where applicable.
 - Genuine contention proof uses separate PostgreSQL connections and a disposable test database; ordinary transaction-wrapped tests cannot prove lock scheduling.

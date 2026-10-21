@@ -5,8 +5,8 @@ namespace Webkul\Account\Filament\Resources\InvoiceResource\Actions;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
+use Illuminate\Validation\ValidationException;
 use Livewire\Component;
-use Throwable;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Facades\Account as AccountFacade;
 use Webkul\Account\Models\Move;
@@ -27,8 +27,10 @@ class ResetToDraftAction extends Action
         $this
             ->label(__('accounts::filament/resources/invoice/actions/reset-to-draft-action.title'))
             ->color('gray')
+            ->authorize(fn (Move $record, Component $livewire): bool => $livewire::getResource()::canEdit($record))
             ->icon('heroicon-o-arrow-path')
             ->action(function (Move $record, Component $livewire): void {
+                $livewire::getResource()::authorizeEdit($record);
                 if (! $this->validateMove($record)) {
                     return;
                 }
@@ -41,10 +43,10 @@ class ResetToDraftAction extends Action
                     $livewire->refreshFormData(['state', 'parent_state']);
 
                     $livewire->dispatch('refreshInvoiceSummary');
-                } catch (Throwable $e) {
+                } catch (ValidationException $e) {
                     Notification::make()
                         ->warning()
-                        ->body($e->getMessage())
+                        ->body(collect($e->errors())->flatten()->first())
                         ->send();
 
                     $this->halt(shouldRollBackDatabaseTransaction: true);

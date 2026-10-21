@@ -163,7 +163,7 @@ it('marks a posted bill as checked through the action', function () {
 });
 
 it('registers a full payment and marks the bill paid through the action', function () {
-    FilamentHelper::actingAs(['view_any_account_bill', 'update_account_bill']);
+    FilamentHelper::actingAs(['view_any_account_bill', 'update_account_bill', 'create_account_payment']);
 
     AccountHelper::bankJournal();
 

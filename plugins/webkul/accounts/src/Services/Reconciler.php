@@ -2,13 +2,16 @@
 
 namespace Webkul\Account\Services;
 
-use Exception;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Models\Account;
 use Webkul\Account\Models\FullReconcile;
+use Webkul\Account\Models\Move;
 use Webkul\Account\Models\MoveLine;
 use Webkul\Account\Models\PartialReconcile;
 use Webkul\Account\Models\Payment;
@@ -17,19 +20,7 @@ class Reconciler
 {
     public function reconcile(Collection $lines): void
     {
-        $lines->load(['account', 'partner', 'currency', 'move', 'company', 'matchedDebits', 'matchedCredits']);
-
-        $this->assertReconcilable($lines);
-
         $this->reconcileGroups([$lines]);
-
-        Payment::whereIn('move_id', $lines->pluck('move_id')->unique())
-            ->get()
-            ->each(function (Payment $payment) {
-                $payment->computeReconciliationStatus();
-
-                $payment->save();
-            });
     }
 
     public function reconcileReversals($moves, $reverseMoves)
@@ -53,36 +44,184 @@ class Reconciler
         return $reverseMoves;
     }
 
-    public function unReconcile($partial): void
+    public function unReconcile(PartialReconcile $partial): void
     {
-        $fullReconcile = $partial->fullReconcile;
+        if (! $partial->exists || $partial->isDirty($partial->getKeyName()) || $partial->getConnection() !== (new Move)->getConnection()) {
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+        }
+        $partial->getConnection()->transaction(function () use ($partial): void {
+            $stored = PartialReconcile::find($partial->getKey());
+            if (! $stored) {
+                return;
+            }
 
-        $affectedLineIds = [$partial->debitMove->id, $partial->creditMove->id];
+            $lines = $this->lockReconciliationLines([$stored->debit_move_id, $stored->credit_move_id]);
+            $stored = PartialReconcile::lockForUpdate()->find($partial->getKey());
+            if (! $stored) {
+                return;
+            }
+            $full = $stored->fullReconcile;
+            $exchangeMove = $stored->exchangeMove ?? $full?->exchangeMove;
+            // The lock context includes siblings; only native endpoints and cleared full links change.
+            $affectedIds = collect($this->matchedLineIds([$stored->debit_move_id, $stored->credit_move_id]));
+            if ($full) {
+                $affectedIds = $affectedIds->merge($lines->where('full_reconcile_id', $full->id)->pluck('id'));
+            }
+            $affected = $lines->whereIn('id', $affectedIds->unique()->all());
+            $this->assertReconciliationLinesMutable($affected);
+            $moves = $affected->pluck('move')->unique('id');
 
-        $debitMove = $partial->debitMove->move;
+            $stored->delete();
+            $full?->delete();
 
-        $creditMove = $partial->creditMove->move;
+            if ($exchangeMove) {
+                app(MoveWorkflow::class)->reverse(collect([$exchangeMove]), [[
+                    'date'      => $exchangeMove->date,
+                    'reference' => __('Reversal of: :name', ['name' => $exchangeMove->name]),
+                ]], true);
+            }
 
-        $exchangeMove = $partial->exchangeMove;
+            foreach ($affected as $line) {
+                $line->refresh();
+                $line->computeAmountResidual();
+                $line->save();
+            }
+            foreach ($moves as $move) {
+                app(MoveCalculator::class)->recomputeTotals($move->refresh())->save();
+            }
+            $this->refreshMatchingNumbers($affected->pluck('id')->all());
+            $this->refreshPaymentStatuses($moves->pluck('id')->all());
+        });
+    }
 
-        $partial->delete();
-
-        $fullReconcile?->delete();
-
-        if ($exchangeMove) {
-            app(MoveWorkflow::class)->reverse(collect([$exchangeMove]), [[
-                'date'      => $exchangeMove->date,
-                'reference' => __('Reversal of: :name', ['name' => $exchangeMove->name]),
-            ]], true);
+    /**
+     * Lock only the accounting component, with move roots before their mutable lines.
+     * The caller owns the transaction. Newly discovered earlier roots require a retry
+     * so roots are never acquired out of order.
+     *
+     * @param  array<int, int>  $lineIds
+     * @param  array<int, int>  $moveIds
+     * @return Collection<int, MoveLine>
+     */
+    public function lockReconciliationLines(array $lineIds = [], array $moveIds = []): Collection
+    {
+        $connection = (new Move)->getConnection();
+        if ($connection->transactionLevel() === 0) {
+            throw new \LogicException('Accounting reconciliation locks require a transaction.');
+        }
+        $context = $this->reconciliationContext($lineIds, $moveIds);
+        $moves = Move::whereKey($context['move_ids'])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        if ($moves->count() !== count($context['move_ids'])) {
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+        }
+        $fresh = $this->reconciliationContext($lineIds, $moveIds);
+        $additionalIds = array_values(array_diff($fresh['move_ids'], $context['move_ids']));
+        if ($additionalIds !== []) {
+            if (min($additionalIds) < max($context['move_ids'])) {
+                throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.changed')]);
+            }
+            // Payment/exchange entries created while waiting follow the held roots.
+            $additional = Move::whereKey($additionalIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            if ($additional->count() !== count($additionalIds)) {
+                throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+            }
+            $moves = $moves->union($additional);
+            $current = $this->reconciliationContext($lineIds, $moveIds);
+            if (array_diff($current['move_ids'], $moves->keys()->all()) !== []) {
+                throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.changed')]);
+            }
+            $fresh = $current;
+        }
+        $lines = MoveLine::whereKey($fresh['line_ids'])->orderBy('id')->lockForUpdate()->get();
+        if ($lines->count() !== count($fresh['line_ids'])) {
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+        }
+        PartialReconcile::whereKey($fresh['partial_ids'])->orderBy('id')->lockForUpdate()->get();
+        FullReconcile::whereKey($fresh['full_ids'])->orderBy('id')->lockForUpdate()->get();
+        $lines->load(['account', 'partner', 'currency', 'company.currency', 'companyCurrency', 'matchedDebits', 'matchedCredits']);
+        foreach ($lines as $line) {
+            $line->setRelation('move', $moves->get($line->move_id));
         }
 
-        $calculator = app(MoveCalculator::class);
+        return $lines;
+    }
 
-        $calculator->recompute($debitMove->refresh())->save();
+    /** @return array{move_ids: array<int, int>, line_ids: array<int, int>, partial_ids: array<int, int>, full_ids: array<int, int>} */
+    protected function reconciliationContext(array $lineIds, array $moveIds): array
+    {
+        $selectedIds = array_values(array_unique($lineIds));
+        $selected = MoveLine::whereKey($selectedIds)->get(['id', 'move_id']);
+        if ($selected->count() !== count($selectedIds)) {
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+        }
+        $moveIds = collect($moveIds)->merge($selected->pluck('move_id'))->unique()->sort()->values()->all();
+        $previous = [];
+        do {
+            $previous = $moveIds;
+            $lines = MoveLine::whereIn('move_id', $moveIds)->get(['id', 'move_id', 'full_reconcile_id']);
+            $partials = PartialReconcile::where(function ($query) use ($lines): void {
+                $query->whereIn('debit_move_id', $lines->pluck('id'))->orWhereIn('credit_move_id', $lines->pluck('id'));
+            })->get();
+            $fullIds = $lines->pluck('full_reconcile_id')->merge($partials->pluck('full_reconcile_id'))->filter()->unique()->all();
+            $fulls = FullReconcile::whereKey($fullIds)->get();
+            $relatedIds = $partials->pluck('debit_move_id')->merge($partials->pluck('credit_move_id'))->unique();
+            $relatedLines = MoveLine::whereKey($relatedIds)->get(['id', 'move_id']);
+            if ($relatedLines->count() !== $relatedIds->count()) {
+                throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+            }
+            $moveIds = collect($moveIds)->merge($relatedLines->pluck('move_id'))
+                ->merge(MoveLine::whereIn('full_reconcile_id', $fullIds)->pluck('move_id'))
+                ->merge($partials->pluck('exchange_move_id'))->merge($fulls->pluck('exchange_move_id'))
+                ->filter()->unique()->sort()->values()->all();
+        } while ($moveIds !== $previous);
 
-        $calculator->recompute($creditMove->refresh())->save();
+        return ['move_ids' => $moveIds, 'line_ids' => $lines->pluck('id')->sort()->values()->all(),
+            'partial_ids'  => $partials->pluck('id')->sort()->values()->all(), 'full_ids' => collect($fullIds)->sort()->values()->all()];
+    }
 
-        $this->refreshMatchingNumbers($affectedLineIds);
+    public function assertNoBankLinkage(Collection $lines): void
+    {
+        $linked = $lines->contains(fn (MoveLine $line): bool => $line->statement_id !== null || $line->statement_line_id !== null
+            || str_starts_with((string) $line->matching_number, 'RB'));
+        if (! $linked && $lines->isNotEmpty() && Schema::hasTable('recon_match_lines') && Schema::hasTable('recon_matches')) {
+            // Partial, split and proposed bank allocations do not always carry an RB stamp.
+            $linked = DB::table('recon_match_lines as allocation')
+                ->join('recon_matches as match', 'match.id', '=', 'allocation.match_id')
+                ->join('accounts_account_move_lines as ledger', 'ledger.id', '=', 'allocation.lineable_id')
+                ->whereIn('ledger.id', $lines->pluck('id'))
+                ->whereColumn('allocation.company_id', 'ledger.company_id')
+                ->whereColumn('match.company_id', 'ledger.company_id')
+                ->where('allocation.lineable_type', 'move_line')
+                ->where('allocation.side', 'ledger')
+                ->whereIn('match.status', ['proposed', 'confirmed'])
+                ->whereNull('allocation.reversed_at')
+                ->whereNull('match.reversed_at')
+                ->exists();
+        }
+        if ($linked) {
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.bank-match')]);
+        }
+    }
+
+    protected function assertReconciliationLinesMutable(Collection $lines): void
+    {
+        $this->assertNoBankLinkage($lines);
+        foreach ($lines->groupBy('move_id') as $moveLines) {
+            app(AccountingDateGuard::class)->assertReconciliationPeriodOpen(
+                $moveLines->first()->move,
+                affectedLineIds: $moveLines->pluck('id')->all(),
+            );
+        }
+    }
+
+    protected function refreshPaymentStatuses(array $moveIds): void
+    {
+        Payment::whereIn('move_id', $moveIds)->orderBy('id')->get()->each(function (Payment $payment): void {
+            $payment->computeState();
+            $payment->computeReconciliationStatus();
+            // Reconciliation refreshes status, not the historical payment inputs.
+            $payment->newQuery()->whereKey($payment->id)->update($payment->only(['state', 'is_matched', 'is_reconciled']));
+        });
     }
 
     /**
@@ -145,19 +284,47 @@ class Reconciler
 
     public function reconcileGroups(array $plans): array
     {
-        $partials = [];
-
-        $fulls = [];
-
+        $connection = (new Move)->getConnection();
         foreach ($plans as $lines) {
-            $results = $this->reconcileNode($this->buildPlan($lines));
-
-            $partials = array_merge($partials, $results['partial_reconciles']);
-
-            $fulls = array_merge($fulls, $results['full_reconciles']);
+            if ($lines->contains(fn (MoveLine $line): bool => ! $line->exists || $line->isDirty($line->getKeyName()) || $line->getConnection() !== $connection)) {
+                throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.unavailable')]);
+            }
         }
 
-        return ['partial_reconciles' => $partials, 'full_reconciles' => $fulls];
+        return $connection->transaction(function () use ($plans): array {
+            $lineIds = collect($plans)->flatMap(fn (Collection $lines) => $lines->pluck('id'))->unique()->values()->all();
+            $locked = $this->lockReconciliationLines($lineIds)->keyBy('id');
+            $affected = $locked->whereIn('id', $this->matchedLineIds($lineIds));
+            $this->assertReconciliationLinesMutable($affected);
+            $partials = [];
+            $fulls = [];
+            foreach ($plans as $lines) {
+                $planLineIds = $lines->pluck('id')->unique();
+                $freshById = MoveLine::whereKey($planLineIds->all())
+                    ->with(['account', 'partner', 'currency', 'move', 'company.currency', 'companyCurrency', 'matchedDebits', 'matchedCredits'])
+                    ->get()
+                    ->keyBy('id');
+                $fresh = $planLineIds->map(fn ($id) => $freshById->get($id));
+                $this->assertReconcilable($fresh);
+                foreach ($fresh as $line) {
+                    $line->computeAmountResidual();
+                }
+                if ($fresh->contains(fn (MoveLine $line): bool => $this->isSettled($line))) {
+                    throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.already-reconciled')]);
+                }
+                foreach ($fresh as $line) {
+                    if ($line->isDirty(['amount_residual', 'amount_residual_currency', 'reconciled'])) {
+                        $line->save();
+                    }
+                }
+                $results = $this->reconcileNode($this->buildPlan($fresh));
+                $partials = array_merge($partials, $results['partial_reconciles']);
+                $fulls = array_merge($fulls, $results['full_reconciles']);
+            }
+            $this->refreshPaymentStatuses($affected->pluck('move_id')->unique()->all());
+
+            return ['partial_reconciles' => $partials, 'full_reconciles' => $fulls];
+        });
     }
 
     protected function buildPlan(Collection $lines): array
@@ -521,7 +688,7 @@ class Reconciler
 
     protected function finalizeFullyMatched(Collection $lines): array
     {
-        $lines->each->refresh();
+        $lines = MoveLine::whereKey($this->matchedLineIds($lines->pluck('id')->all()))->get();
 
         $lines->load(['matchedDebits', 'matchedCredits', 'company.currency', 'currency']);
 
@@ -622,7 +789,7 @@ class Reconciler
             return;
         }
 
-        $lines = MoveLine::whereIn('id', $lineIds)->get();
+        $lines = MoveLine::whereKey($this->matchedLineIds($lineIds))->get();
 
         $partials = $lines
             ->flatMap(fn (MoveLine $line) => $line->matchedDebits->merge($line->matchedCredits))
@@ -657,6 +824,9 @@ class Reconciler
         }
 
         foreach ($lines as $line) {
+            if ($line->statement_id !== null || $line->statement_line_id !== null || str_starts_with((string) $line->matching_number, 'RB')) {
+                continue;
+            }
             $line->matching_number = match (true) {
                 ! isset($lineToGroup[$line->id]) => null,
                 (bool) $line->full_reconcile_id  => (string) $line->full_reconcile_id,
@@ -665,6 +835,21 @@ class Reconciler
 
             $line->save();
         }
+    }
+
+    /** @param array<int, int> $lineIds @return array<int, int> */
+    protected function matchedLineIds(array $lineIds): array
+    {
+        do {
+            $previous = $lineIds;
+            $partials = PartialReconcile::where(function ($query) use ($lineIds): void {
+                $query->whereIn('debit_move_id', $lineIds)->orWhereIn('credit_move_id', $lineIds);
+            })->get(['debit_move_id', 'credit_move_id']);
+            $lineIds = collect($lineIds)->merge($partials->pluck('debit_move_id'))->merge($partials->pluck('credit_move_id'))
+                ->unique()->sort()->values()->all();
+        } while ($lineIds !== $previous);
+
+        return $lineIds;
     }
 
     protected function mergeGroups(array &$groupToLines, array &$lineToGroup, $debitGroup, $creditGroup): void
@@ -689,38 +874,40 @@ class Reconciler
         }
 
         if ($lines->contains(fn (MoveLine $line) => $line->reconciled)) {
-            throw new Exception(__('You are trying to reconcile some entries that are already reconciled.'));
+            throw ValidationException::withMessages(['lines' => __('accounts::system.reconciliation.already-reconciled')]);
         }
 
-        if ($lines->contains(fn (MoveLine $line) => $line->parent_state != MoveState::POSTED)) {
-            throw new Exception(__('You can only reconcile posted entries.'));
+        $this->assertNoBankLinkage($lines);
+
+        if ($lines->contains(fn (MoveLine $line) => $line->parent_state != MoveState::POSTED || $line->move->state !== MoveState::POSTED)) {
+            throw ValidationException::withMessages(['lines' => __('You can only reconcile posted entries.')]);
         }
 
         $accounts = $lines->pluck('account')->unique();
 
         if ($accounts->count() > 1) {
-            throw new Exception(__(
+            throw ValidationException::withMessages(['lines' => __(
                 'Entries are not from the same account: :accounts',
                 ['accounts' => $accounts->pluck('display_name')->implode(', ')]
-            ));
+            )]);
         }
 
         if ($lines->pluck('partner_id')->unique()->count() > 1) {
-            throw new Exception('All lines must have the same partner');
+            throw ValidationException::withMessages(['lines' => __('All lines must have the same partner.')]);
         }
 
         if ($lines->pluck('company')->unique()->count() > 1) {
-            throw new Exception(__(
+            throw ValidationException::withMessages(['lines' => __(
                 "Entries don't belong to the same company: :companies",
                 ['companies' => $lines->pluck('company')->pluck('display_name')->implode(', ')]
-            ));
+            )]);
         }
 
         if (! $this->allowsReconciliation($accounts->first())) {
-            throw new Exception(__(
+            throw ValidationException::withMessages(['lines' => __(
                 'Account :account does not allow reconciliation. First change the configuration of this account to allow it.',
                 ['account' => $accounts->first()->display_name]
-            ));
+            )]);
         }
     }
 

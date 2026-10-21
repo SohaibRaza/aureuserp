@@ -1,12 +1,19 @@
 <?php
 
+use Filament\Notifications\Notification;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\MoveType;
 use Webkul\Account\Enums\PaymentState;
 use Webkul\Account\Enums\PaymentStatus;
+use Webkul\Account\Events\MoveCancelled;
+use Webkul\Account\Events\MoveDrafted;
+use Webkul\Account\Facades\Account as AccountFacade;
 use Webkul\Account\Filament\Resources\InvoiceResource\Actions\CancelAction;
 use Webkul\Account\Filament\Resources\InvoiceResource\Actions\ConfirmAction;
 use Webkul\Account\Filament\Resources\InvoiceResource\Actions\PayAction;
@@ -16,6 +23,7 @@ use Webkul\Account\Filament\Resources\InvoiceResource\Actions\SetAsCheckedAction
 use Webkul\Account\Filament\Resources\InvoiceResource\Pages\CreateInvoice;
 use Webkul\Account\Filament\Resources\InvoiceResource\Pages\EditInvoice;
 use Webkul\Account\Filament\Resources\InvoiceResource\Pages\ListInvoices;
+use Webkul\Account\Filament\Resources\InvoiceResource\Pages\ViewInvoice;
 use Webkul\Account\Models\Move;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
@@ -140,7 +148,7 @@ it('marks a posted invoice as checked through the action', function () {
 });
 
 it('registers a full payment and marks the invoice paid through the action', function () {
-    FilamentHelper::actingAs(['view_any_account_invoice', 'update_account_invoice']);
+    FilamentHelper::actingAs(['view_any_account_invoice', 'update_account_invoice', 'create_account_payment']);
 
     AccountHelper::bankJournal();
 
@@ -160,7 +168,7 @@ it('registers a full payment and marks the invoice paid through the action', fun
 });
 
 it('marks all payments paid once the invoice is fully paid in installments', function () {
-    FilamentHelper::actingAs(['view_any_account_invoice', 'update_account_invoice']);
+    FilamentHelper::actingAs(['view_any_account_invoice', 'update_account_invoice', 'create_account_payment']);
 
     AccountHelper::bankJournal();
 
@@ -190,3 +198,68 @@ it('marks all payments paid once the invoice is fully paid in installments', fun
         fn ($payment) => expect($payment->state)->toBe(PaymentStatus::PAID)
     );
 });
+
+it('hides correction actions from invoice viewers without update permission', function (string $action, bool $posted) {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'view_account_invoice']);
+    $invoice = $posted ? postedInvoiceRecord() : AccountHelper::invoice();
+    Livewire::test(ViewInvoice::class, ['record' => $invoice->id])->assertActionHidden($action);
+})->with([[CancelAction::class, false], [ResetToDraftAction::class, true]]);
+
+it('enforces update permission inside invoice correction callbacks', function (string $action, bool $posted) {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'view_account_invoice']);
+    $invoice = $posted ? postedInvoiceRecord() : AccountHelper::invoice();
+    $component = Livewire::test(ViewInvoice::class, ['record' => $invoice->id])->instance();
+    $record = $component->getRecord();
+    $state = $record->state;
+    expect(fn () => ($action::make()->getActionFunction())($record, $component))->toThrow(AuthorizationException::class);
+    expect($record->refresh()->state)->toBe($state);
+})->with([[CancelAction::class, false], [ResetToDraftAction::class, true]]);
+
+it('allows invoice editors to correct invoices from the view page', function (string $action, bool $posted, MoveState $expected) {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'view_account_invoice', 'update_account_invoice']);
+    $invoice = $posted ? postedInvoiceRecord() : AccountHelper::invoice();
+    Livewire::test(ViewInvoice::class, ['record' => $invoice->id])->callAction($action);
+    expect($invoice->refresh()->state)->toBe($expected);
+})->with([[CancelAction::class, false, MoveState::CANCEL], [ResetToDraftAction::class, true, MoveState::DRAFT]]);
+
+it('hides payment registration from invoice editors without payment creation permission', function () {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'update_account_invoice']);
+    AccountHelper::bankJournal();
+    $invoice = postedInvoiceRecord();
+    Livewire::test(EditInvoice::class, ['record' => $invoice->id])->assertActionHidden(PayAction::class);
+});
+
+it('shows the first safe validation message when an invoice correction is blocked', function (string $action, bool $posted, string $operation) {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'view_account_invoice', 'update_account_invoice']);
+    $invoice = $posted ? postedInvoiceRecord() : AccountHelper::invoice();
+    $state = $invoice->state;
+    $page = Livewire::test(ViewInvoice::class, ['record' => $invoice->id]);
+    $message = __('accounts::system.reconciliation.bank-match');
+    AccountFacade::shouldReceive($operation)->once()->andThrow(ValidationException::withMessages([
+        'state' => [$message, __('accounts::system.reconciliation.changed')],
+    ]));
+
+    $page->mountAction($action)
+        ->assertNotified(Notification::make()->warning()->body($message))
+        ->assertNotDispatched('refreshInvoiceSummary');
+
+    expect($invoice->refresh()->state)->toBe($state);
+})->with([[CancelAction::class, false, 'cancelMove'], [ResetToDraftAction::class, true, 'resetToDraftMove']]);
+
+it('propagates unexpected invoice correction callback errors and rolls back writes', function (string $action, bool $posted, string $event) {
+    FilamentHelper::actingAs(['view_any_account_invoice', 'view_account_invoice', 'update_account_invoice']);
+    $invoice = $posted ? postedInvoiceRecord() : AccountHelper::invoice();
+    $state = $invoice->state;
+    $lineStates = $invoice->lines()->orderBy('id')->pluck('parent_state', 'id')->all();
+    $page = Livewire::test(ViewInvoice::class, ['record' => $invoice->id]);
+    $transactionLevel = DB::connection()->transactionLevel();
+    Event::listen($event, function (): never {
+        throw new RuntimeException('Unexpected correction callback failure');
+    });
+
+    expect(fn () => $page->callAction($action))->toThrow(RuntimeException::class, 'Unexpected correction callback failure');
+    Notification::assertNotNotified();
+    expect($invoice->refresh()->state)->toBe($state)
+        ->and($invoice->lines()->orderBy('id')->pluck('parent_state', 'id')->all())->toBe($lineStates)
+        ->and(DB::connection()->transactionLevel())->toBe($transactionLevel);
+})->with([[CancelAction::class, false, MoveCancelled::class], [ResetToDraftAction::class, true, MoveDrafted::class]]);

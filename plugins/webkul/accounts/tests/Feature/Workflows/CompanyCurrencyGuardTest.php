@@ -41,9 +41,11 @@ function postAnInvoice(): void
 }
 
 it('allows changing the company currency while no journal items exist', function () {
-    $this->company->update(['currency_id' => $this->otherCurrency->id]);
+    $company = CompanyHelper::company();
 
-    expect($this->company->refresh()->currency_id)->toBe($this->otherCurrency->id);
+    $company->update(['currency_id' => $this->otherCurrency->id]);
+
+    expect($company->refresh()->currency_id)->toBe($this->otherCurrency->id);
 });
 
 it('blocks changing the company currency once journal items exist', function () {

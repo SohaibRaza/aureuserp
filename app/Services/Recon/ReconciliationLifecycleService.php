@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
+use Webkul\Account\Services\AccountingDateGuard;
 
 class ReconciliationLifecycleService
 {
@@ -37,6 +38,7 @@ class ReconciliationLifecycleService
         return DB::transaction(function () use ($reconciliation): BankReconciliation {
             $reconciliation = BankReconciliation::query()->lockForUpdate()->findOrFail($reconciliation->id);
             $this->mutationGuard->assert($reconciliation, 'complete', ['review'], 'Only a reconciliation in review can be completed.');
+            app(AccountingDateGuard::class)->lockPeriodBoundary((int) $reconciliation->company_id, completing: true);
             if (config('reconciliation.require_different_reviewer', false) && $reconciliation->submitted_by === Auth::id()) {
                 throw new InvalidArgumentException('The preparer cannot complete this reconciliation.');
             }

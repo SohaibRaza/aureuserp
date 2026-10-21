@@ -7,6 +7,8 @@ use Filament\Notifications\Notification;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Enums\DisplayType;
 use Webkul\Account\Enums\MoveState;
@@ -28,52 +30,89 @@ class MoveWorkflow
 {
     public function cancel(AccountMove $move): AccountMove
     {
-        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+        if (! $move->exists || $move->isDirty($move->getKeyName()) || $move->getConnection() !== (new AccountMove)->getConnection()) {
+            throw ValidationException::withMessages(['state' => __('accounts::system.reconciliation.unavailable')]);
+        }
 
-        $move->state = MoveState::CANCEL;
+        return $move->getConnection()->transaction(function () use ($move): AccountMove {
+            $reconciler = app(Reconciler::class);
+            $lines = $reconciler->lockReconciliationLines([], [$move->getKey()]);
+            $move = $move->newQuery()->findOrFail($move->getKey());
+            if ($move->state !== MoveState::DRAFT) {
+                throw ValidationException::withMessages(['state' => __('accounts::system.move.cancel-draft-only')]);
+            }
+            $reconciler->assertNoBankLinkage($lines->where('move_id', $move->getKey()));
+            app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+            $move->state = MoveState::CANCEL;
+            $move->save();
+            $move = app(MoveCalculator::class)->recompute($move);
+            $move->refresh();
+            $this->stampLineStates($move, MoveState::CANCEL);
+            MoveCancelled::dispatch($move);
 
-        $move->save();
-
-        $move = app(MoveCalculator::class)->recompute($move);
-
-        $move->refresh();
-
-        $this->stampLineStates($move, MoveState::CANCEL);
-
-        MoveCancelled::dispatch($move);
-
-        return $move;
+            return $move;
+        });
     }
 
     public function post(AccountMove $move): AccountMove
     {
-        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+        $dirty = $move->getDirty();
+        $original = $move->getRawOriginal();
+        $input = $move->getAttributes();
 
-        $this->assertPostable($move);
-
-        $move->state = MoveState::POSTED;
-
-        $move->posted_before = true;
-
-        $move->save();
-
-        $move = app(MoveCalculator::class)->recompute($move);
-
-        $move->refresh();
-
-        $this->stampLineStates($move, MoveState::POSTED);
-
-        $move->refresh();
-
-        if ($move->reversedEntry?->state == MoveState::POSTED) {
-            $this->reconcileAgainstReversedEntry($move);
+        if ($move->isDirty([$move->getKeyName(), 'reversed_entry_id'])) {
+            throw new Exception(__('accounts::system.move.posting-identity-changed'));
         }
 
-        $this->bumpPartnerRanks($move);
+        try {
+            return $move->getConnection()->transaction(function () use ($move, $dirty): AccountMove {
+                $snapshot = $move->newQuery()->whereKey($move->getKey())->firstOrFail();
+                $moveIds = collect([$snapshot->reversed_entry_id, $move->getKey()])->filter()->unique()->sort();
 
-        MoveConfirmed::dispatch($move);
+                app(Reconciler::class)->lockReconciliationLines([], $moveIds->values()->all());
+                $stored = $move->newQuery()->whereKey($move->getKey())->firstOrFail();
 
-        return $move;
+                if ((int) $stored->reversed_entry_id !== (int) $snapshot->reversed_entry_id) {
+                    throw new Exception(__('accounts::system.move.posting-identity-changed'));
+                }
+
+                if ($stored->state !== MoveState::DRAFT) {
+                    throw ValidationException::withMessages(['state' => __('accounts::account-manager.post-action-validate.draft-state-required')]);
+                }
+
+                $move->setRawAttributes($stored->getAttributes(), true);
+                $move->setRawAttributes(array_replace($move->getAttributes(), $dirty));
+                $move->unsetRelations();
+
+                app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+                $this->assertPostable($move);
+
+                $move->state = MoveState::POSTED;
+                $move->posted_before = true;
+                $move->save();
+
+                $move = app(MoveCalculator::class)->recompute($move);
+                $move->refresh();
+                $this->stampLineStates($move, MoveState::POSTED);
+                $move->refresh();
+
+                if ($move->reversedEntry?->state == MoveState::POSTED) {
+                    $this->reconcileAgainstReversedEntry($move);
+                }
+
+                $this->bumpPartnerRanks($move);
+                MoveConfirmed::dispatch($move);
+
+                return $move;
+            });
+        } catch (Throwable $error) {
+            // Rollback does not restore Eloquent attributes; keep a failed caller retryable.
+            $move->setRawAttributes($original, true);
+            $move->setRawAttributes($input);
+            $move->unsetRelations();
+
+            throw $error;
+        }
     }
 
     public function markChecked(AccountMove $move): AccountMove
@@ -87,80 +126,93 @@ class MoveWorkflow
 
     public function resetToDraft(AccountMove $move): AccountMove
     {
-        app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
-
-        if (! in_array($move->state, [MoveState::CANCEL, MoveState::POSTED])) {
-            throw new Exception('Only posted/cancelled journal entries can be reset to draft.');
+        if (! $move->exists || $move->isDirty($move->getKeyName()) || $move->getConnection() !== (new AccountMove)->getConnection()) {
+            throw ValidationException::withMessages(['state' => __('accounts::system.reconciliation.unavailable')]);
         }
 
-        $this->assertNotExchangeDifference($move);
+        return $move->getConnection()->transaction(function () use ($move): AccountMove {
+            $reconciler = app(Reconciler::class);
+            $lines = $reconciler->lockReconciliationLines([], [$move->getKey()]);
+            $move = $move->newQuery()->findOrFail($move->getKey());
+            app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move);
+            if (! in_array($move->state, [MoveState::CANCEL, MoveState::POSTED], true)) {
+                throw ValidationException::withMessages(['state' => __('accounts::system.move.reset-posted-cancelled-only')]);
+            }
+            $reconciler->assertNoBankLinkage($lines->where('move_id', $move->getKey()));
+            $this->assertNotExchangeDifference($move);
+            $lineIds = $move->lines()->pluck('id');
+            $partials = PartialReconcile::where(function ($query) use ($lineIds): void {
+                $query->whereIn('debit_move_id', $lineIds)->orWhereIn('credit_move_id', $lineIds);
+            })->orderBy('id')->get();
+            $partials->each(fn (PartialReconcile $partial) => $reconciler->unReconcile($partial));
+            $move->refresh();
+            $move->state = MoveState::DRAFT;
+            $move->payment_state = PaymentState::NOT_PAID;
+            $move->save();
+            $move = app(MoveCalculator::class)->recompute($move);
+            $move->save();
+            $move->refresh();
+            $this->stampLineStates($move, MoveState::DRAFT);
+            MoveDrafted::dispatch($move);
 
-        $reconciler = app(Reconciler::class);
-
-        $move->lines->each(function (MoveLine $line) use ($reconciler) {
-            $line->matchedDebits->each(fn ($partial) => $reconciler->unReconcile($partial));
-
-            $line->matchedCredits->each(fn ($partial) => $reconciler->unReconcile($partial));
+            return $move;
         });
-
-        $move->state = MoveState::DRAFT;
-
-        $move->payment_state = PaymentState::NOT_PAID;
-
-        $move->save();
-
-        $move = app(MoveCalculator::class)->recompute($move);
-
-        $move->save();
-
-        $move->refresh();
-
-        $this->stampLineStates($move, MoveState::DRAFT);
-
-        MoveDrafted::dispatch($move);
-
-        return $move;
     }
 
     public function reverse(Collection $moves, array $defaultValuesPerMove = [], bool $cancel = false): Collection
     {
-        $moves->values()->each(fn (AccountMove $move, int $index) => app(AccountingDateGuard::class)->assertReconciliationPeriodOpen(
-            $move,
-            $defaultValuesPerMove[$index]['date'] ?? $move->date,
-        ));
-
-        if ($cancel) {
-            $moves->flatMap(fn (AccountMove $move) => $move->lines)->each(function (MoveLine $line) {
-                $line->matchedDebits->each(fn ($partial) => $partial->delete());
-
-                $line->matchedCredits->each(fn ($partial) => $partial->delete());
-            });
-        }
-
-        $reversals = collect();
-
-        foreach ($moves->values() as $index => $move) {
-            $reversals->push($this->buildReversal($move, $defaultValuesPerMove[$index] ?? []));
-        }
-
-        foreach ($reversals as $reversal) {
-            foreach ($reversal->lines as $line) {
-                if ($reversal->move_type === MoveType::ENTRY || $line->display_type === DisplayType::COGS) {
-                    $line->update([
-                        'balance'         => -$line->balance,
-                        'amount_currency' => -$line->amount_currency,
-                    ]);
+        return DB::transaction(function () use ($moves, $defaultValuesPerMove, $cancel): Collection {
+            $moves = $moves->values();
+            $reconciler = app(Reconciler::class);
+            $lockedLines = $reconciler->lockReconciliationLines([], $moves->pluck('id')->all());
+            $reconciler->assertNoBankLinkage($lockedLines->whereIn('move_id', $moves->pluck('id')->all()));
+            foreach ($moves->sortBy('id') as $move) {
+                $move->refresh();
+                if ($move->state !== MoveState::POSTED) {
+                    throw new Exception(__('accounts::system.payment-reversal.posted-only'));
+                }
+                if ($cancel && $move->matchedPayments()->exists()) {
+                    throw new Exception(__('accounts::system.payment-reversal.paid-cancel'));
                 }
             }
-        }
 
-        if ($cancel) {
-            $reversals->each(fn (AccountMove $reversal) => $this->post($reversal));
-        }
+            $moves->values()->each(fn (AccountMove $move, int $index) => app(AccountingDateGuard::class)->assertReconciliationPeriodOpen(
+                $move,
+                $defaultValuesPerMove[$index]['date'] ?? $move->date,
+            ));
 
-        $moves->each(fn (AccountMove $move) => MoveReversed::dispatch($move));
+            if ($cancel) {
+                $lineIds = $moves->flatMap(fn (AccountMove $move) => $move->lines->pluck('id'));
+                PartialReconcile::where(function ($query) use ($lineIds): void {
+                    $query->whereIn('debit_move_id', $lineIds)->orWhereIn('credit_move_id', $lineIds);
+                })->orderBy('id')->get()->each(fn (PartialReconcile $partial) => $reconciler->unReconcile($partial));
+            }
 
-        return $reversals;
+            $reversals = collect();
+
+            foreach ($moves->values() as $index => $move) {
+                $reversals->push($this->buildReversal($move, $defaultValuesPerMove[$index] ?? []));
+            }
+
+            foreach ($reversals as $reversal) {
+                foreach ($reversal->lines as $line) {
+                    if ($reversal->move_type === MoveType::ENTRY || $line->display_type === DisplayType::COGS) {
+                        $line->update([
+                            'balance'         => -$line->balance,
+                            'amount_currency' => -$line->amount_currency,
+                        ]);
+                    }
+                }
+            }
+
+            if ($cancel) {
+                $reversals->each(fn (AccountMove $reversal) => $this->post($reversal));
+            }
+
+            $moves->each(fn (AccountMove $move) => MoveReversed::dispatch($move));
+
+            return $reversals;
+        });
     }
 
     protected function buildReversal(AccountMove $move, array $defaultValues): AccountMove
@@ -250,48 +302,48 @@ class MoveWorkflow
     {
         if (! $move->partner_id) {
             if ($move->isSaleDocument(true)) {
-                throw new Exception(__('accounts::account-manager.post-action-validate.customer-required'));
+                throw ValidationException::withMessages(['partner_id' => __('accounts::account-manager.post-action-validate.customer-required')]);
             }
 
             if ($move->isPurchaseDocument(true)) {
-                throw new Exception(__('accounts::account-manager.post-action-validate.vendor-required'));
+                throw ValidationException::withMessages(['partner_id' => __('accounts::account-manager.post-action-validate.vendor-required')]);
             }
         }
 
         if ($move->partnerBank?->trashed()) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.bank-archived'));
+            throw ValidationException::withMessages(['partner_bank_id' => __('accounts::account-manager.post-action-validate.bank-archived')]);
+        }
+
+        if (! $move->currency) {
+            throw ValidationException::withMessages(['currency_id' => __('accounts::account-manager.post-action-validate.currency-archived')]);
         }
 
         if (float_compare($move->amount_total, 0, precisionRounding: $move->currency->rounding) < 0) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.negative-amount'));
+            throw ValidationException::withMessages(['amount_total' => __('accounts::account-manager.post-action-validate.negative-amount')]);
         }
 
         if (! $move->invoice_date) {
             if ($move->isSaleDocument(true)) {
                 $move->invoice_date = now();
             } elseif ($move->isPurchaseDocument(true)) {
-                throw new Exception(__('accounts::account-manager.post-action-validate.date-required'));
+                throw ValidationException::withMessages(['invoice_date' => __('accounts::account-manager.post-action-validate.date-required')]);
             }
         }
 
         if (in_array($move->state, [MoveState::POSTED, MoveState::CANCEL])) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.draft-state-required'));
+            throw ValidationException::withMessages(['state' => __('accounts::account-manager.post-action-validate.draft-state-required')]);
         }
 
         if ($move->lines->isEmpty()) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.lines-required'));
+            throw ValidationException::withMessages(['lines' => __('accounts::account-manager.post-action-validate.lines-required')]);
         }
 
         if ($move->lines->some(fn (MoveLine $line) => $line->account && $line->account->deprecated)) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.account-deprecated'));
+            throw ValidationException::withMessages(['lines' => __('accounts::account-manager.post-action-validate.account-deprecated')]);
         }
 
         if (! $move->journal) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.journal-archived'));
-        }
-
-        if (! $move->currency) {
-            throw new Exception(__('accounts::account-manager.post-action-validate.currency-archived'));
+            throw ValidationException::withMessages(['journal_id' => __('accounts::account-manager.post-action-validate.journal-archived')]);
         }
     }
 
@@ -302,7 +354,7 @@ class MoveWorkflow
         $fullIds = FullReconcile::where('exchange_move_id', $move->id)->pluck('id')->unique();
 
         if ($partialIds->merge($fullIds)->isNotEmpty()) {
-            throw new Exception('You cannot reset to draft an exchange difference journal entry.');
+            throw ValidationException::withMessages(['state' => __('accounts::system.move.reset-exchange-difference')]);
         }
     }
 

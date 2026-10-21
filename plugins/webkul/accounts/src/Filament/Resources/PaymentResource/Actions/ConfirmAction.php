@@ -4,8 +4,8 @@ namespace Webkul\Account\Filament\Resources\PaymentResource\Actions;
 
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
+use Illuminate\Validation\ValidationException;
 use Livewire\Component;
-use Throwable;
 use Webkul\Account\Enums\PaymentStatus;
 use Webkul\Account\Facades\Account as AccountFacade;
 use Webkul\Account\Models\Payment;
@@ -24,9 +24,11 @@ class ConfirmAction extends Action
         $this
             ->label(__('accounts::filament/resources/payment/actions/confirm-action.title'))
             ->color('primary')
+            ->authorize(fn (Payment $record, Component $livewire): bool => $livewire::getResource()::canEdit($record))
             ->requiresConfirmation()
             ->databaseTransaction()
             ->action(function (Payment $record, Component $livewire): void {
+                $livewire::getResource()::authorizeEdit($record);
                 try {
                     $record = AccountFacade::postPayment($record);
 
@@ -39,10 +41,10 @@ class ConfirmAction extends Action
                     AccountFacade::confirmMove($record->move);
 
                     $livewire->refreshFormData(['state']);
-                } catch (Throwable $e) {
+                } catch (ValidationException $exception) {
                     Notification::make()
-                        ->danger()
-                        ->body($e->getMessage())
+                        ->warning()
+                        ->body(collect($exception->errors())->flatten()->first())
                         ->send();
 
                     $livewire->unmountAction();

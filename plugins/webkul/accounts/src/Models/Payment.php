@@ -3,12 +3,14 @@
 namespace Webkul\Account\Models;
 
 use Exception;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Auth;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Enums\JournalType;
+use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\MoveType;
 use Webkul\Account\Enums\PaymentState;
 use Webkul\Account\Enums\PaymentStatus;
@@ -287,7 +289,9 @@ class Payment extends Model
 
     public function computeCreator()
     {
-        $this->creator_id = Auth::id();
+        if (! $this->exists) {
+            $this->creator_id ??= Auth::id();
+        }
     }
 
     public function computePartnerType()
@@ -343,7 +347,7 @@ class Payment extends Model
 
     public function computeReconciliationStatus()
     {
-        if (! $this->move) {
+        if (! $this->move || $this->move->state !== MoveState::POSTED) {
             $this->is_reconciled = false;
             $this->is_matched = false;
 
@@ -409,6 +413,16 @@ class Payment extends Model
 
     public function computeDestinationAccountId()
     {
+        // A posted payment retains the account used by its journal entry.
+        $postedPayment = $this->exists ? $this->newQueryWithoutScopes()->whereKey($this->getKey())
+            ->whereHas('move', fn (Builder $query) => $query->withoutGlobalScopes()->where('state', MoveState::POSTED))
+            ->first(['destination_account_id']) : null;
+        if ($postedPayment) {
+            $this->destination_account_id = $postedPayment->destination_account_id;
+
+            return;
+        }
+
         if ($this->isDirty('destination_account_id') && $this->destination_account_id) {
             return;
         }

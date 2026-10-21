@@ -117,7 +117,7 @@ it('marks a posted refund as checked through the action', function () {
 });
 
 it('registers a full payment and marks the refund paid through the action', function () {
-    FilamentHelper::actingAs(['view_any_account_refund', 'update_account_refund']);
+    FilamentHelper::actingAs(['view_any_account_refund', 'update_account_refund', 'create_account_payment']);
 
     AccountHelper::bankJournal();
 

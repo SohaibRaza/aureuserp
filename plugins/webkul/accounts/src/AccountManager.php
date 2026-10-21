@@ -120,6 +120,16 @@ class AccountManager
         return $this->payments->postPayment($payment);
     }
 
+    public function cancelPayment(Payment $payment): Payment
+    {
+        return $this->payments->cancelPayment($payment);
+    }
+
+    public function resetToDraftPayment(Payment $payment): Payment
+    {
+        return $this->payments->resetToDraftPayment($payment);
+    }
+
     public function createExchangeDifferenceMoves(array $differences): array
     {
         return $this->exchangeDifferences->postDifferences($differences);

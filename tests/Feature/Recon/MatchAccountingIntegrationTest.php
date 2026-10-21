@@ -1,17 +1,31 @@
 <?php
 
 require_once __DIR__.'/ReconTestSupport.php';
+require_once __DIR__.'/../../../plugins/webkul/accounts/tests/Helpers/AccountHelper.php';
 
 use App\Models\Recon\BankReconciliation;
 use App\Models\Recon\ReconMatch;
 use App\Models\Recon\StatementLine;
 use App\Services\Recon\MatchingEngine;
 use App\Services\Recon\MatchService;
+use App\Services\Recon\ReconciliationLifecycleService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
+use Webkul\Account\Enums\MoveState;
+use Webkul\Account\Enums\MoveType;
+use Webkul\Account\Enums\PaymentType;
 use Webkul\Account\Models\BankStatement;
+use Webkul\Account\Models\Journal;
 use Webkul\Account\Models\MoveLine;
 use Webkul\Account\Models\PartialReconcile;
+use Webkul\Account\Models\Payment;
+use Webkul\Account\Models\PaymentMethodLine;
+use Webkul\Account\Services\MoveWorkflow;
+use Webkul\Account\Services\PaymentRegistrar;
 use Webkul\Account\Services\Reconciler;
+use Webkul\PluginManager\Models\Plugin;
+use Webkul\PluginManager\Package;
 use Webkul\Security\Models\User;
 use Webkul\Support\Models\Company;
 
@@ -124,6 +138,138 @@ function u13MoveLine(BankReconciliation $reconciliation, string $balance, array 
 
     return $lineId;
 }
+
+function u15ClearedPayment(string $clearing = 'full', bool $completed = false): array
+{
+    DB::table('plugins')->updateOrInsert(['name' => 'accounts'], ['is_installed' => true, 'is_active' => true, 'updated_at' => now()]);
+    Package::$plugins = Plugin::all()->keyBy('name');
+    URL::resolveMissingNamedRoutesUsing(fn () => '#');
+    AccountHelper::actingAsAdmin();
+    $journal = testBankJournal(true);
+    foreach (Journal::getDefaultInboundPaymentMethodLines() as $data) {
+        PaymentMethodLine::create([...$data, 'journal_id' => $journal->id]);
+    }
+    $invoice = AccountHelper::invoice(MoveType::OUT_INVOICE, overrides: [
+        'date' => '2026-09-15', 'invoice_date' => '2026-09-15', 'invoice_date_due' => '2026-09-15',
+    ]);
+    AccountHelper::productLine($invoice, AccountHelper::account('income'), qty: 1, priceUnit: 80);
+    AccountHelper::post($invoice);
+    $payment = Payment::create([
+        'company_id'             => $invoice->company_id, 'journal_id' => $journal->id,
+        'payment_method_line_id' => $journal->inboundPaymentMethodLines()->firstOrFail()->id,
+        'currency_id'            => $invoice->currency_id, 'partner_id' => $invoice->partner_id,
+        'outstanding_account_id' => $journal->default_account_id, 'payment_type' => PaymentType::RECEIVE,
+        'amount'                 => 80, 'date' => '2026-09-15',
+    ]);
+    $payment->generateJournalEntry();
+    app(PaymentRegistrar::class)->postPayment($payment->refresh());
+    app(MoveWorkflow::class)->post($payment->move);
+    app(PaymentRegistrar::class)->reconcilePayments([['payment' => $payment, 'to_reconcile' => $invoice->fresh('paymentTermLines')->paymentTermLines]]);
+    [$liquidityLines, $counterpartLines] = $payment->refresh()->seekForLines();
+    $liquidity = $liquidityLines->sole();
+    $counterpart = $counterpartLines->sole();
+    $reconciliation = u13Reconciliation(validBankReconciliationAttributes($journal));
+    $reconciliation->update(['period_start' => '2026-09-01', 'period_end' => '2026-09-30', 'balance_end_real' => '80.0000']);
+    $bankLine = u13BankLine($reconciliation, '80.0000');
+    $allocations = $clearing === 'full' ? [] : [
+        'bank' => [$bankLine->id => '40.0000'], 'ledger' => [$liquidity->id => '40.0000'],
+    ];
+    $match = $clearing === 'proposed'
+        ? app(MatchService::class)->proposeMatch($reconciliation, [$bankLine->id], [$liquidity->id], allocations: $allocations)
+        : app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$liquidity->id], allocations: $allocations);
+    if ($completed) {
+        app(ReconciliationLifecycleService::class)->startReview($reconciliation->refresh());
+        app(ReconciliationLifecycleService::class)->complete($reconciliation->refresh());
+    }
+
+    return compact('invoice', 'payment', 'liquidity', 'counterpart', 'reconciliation', 'bankLine', 'match');
+}
+
+function u15BankEvidence(array $fixture): array
+{
+    return [
+        'liquidity'      => $fixture['liquidity']->fresh()->getAttributes(),
+        'bank_line'      => $fixture['bankLine']->fresh()->getAttributes(),
+        'match'          => $fixture['match']->fresh()->getAttributes(),
+        'allocations'    => $fixture['match']->lines()->orderBy('id')->get()->map->getAttributes()->all(),
+        'reconciliation' => $fixture['reconciliation']->fresh()->getAttributes(),
+        'statement'      => $fixture['reconciliation']->statement->fresh()->getAttributes(),
+        'snapshots'      => $fixture['reconciliation']->snapshots()->orderBy('id')->get()->map->getAttributes()->all(),
+    ];
+}
+
+it('keeps bank clearing evidence intact when native AR allocation is removed and reapplied', function (bool $completed): void {
+    $fixture = u15ClearedPayment(completed: $completed);
+    ['invoice' => $invoice, 'payment' => $payment, 'counterpart' => $counterpart, 'reconciliation' => $reconciliation] = $fixture;
+    $before = u15BankEvidence($fixture);
+    expect($before['snapshots'])->toHaveCount($completed ? 1 : 0);
+    if ($completed) {
+        $snapshot = $reconciliation->snapshots()->sole();
+        expect($snapshot->payload_hash)->toBe(hash('sha256', json_encode($snapshot->payload, JSON_THROW_ON_ERROR)));
+    }
+    $partial = PartialReconcile::where('credit_move_id', $counterpart->id)->sole();
+
+    app(Reconciler::class)->unReconcile($partial);
+
+    expect((float) $invoice->fresh()->amount_residual)->toBe(80.0)
+        ->and($payment->fresh()->is_reconciled)->toBeFalse()
+        ->and(u15BankEvidence($fixture))->toBe($before);
+    app(Reconciler::class)->reconcile($invoice->fresh('paymentTermLines')->paymentTermLines->push($counterpart->fresh()));
+    expect((float) $invoice->fresh()->amount_residual)->toBe(0.0)
+        ->and($payment->fresh()->is_reconciled)->toBeTrue()
+        ->and(u15BankEvidence($fixture))->toBe($before);
+})->with(['open bank period' => false, 'completed bank period' => true]);
+
+it('resets the invoice while protecting the selected cleared bank payment', function (bool $completed): void {
+    $fixture = u15ClearedPayment(completed: $completed);
+    ['invoice' => $invoice, 'payment' => $payment, 'liquidity' => $liquidity, 'counterpart' => $counterpart] = $fixture;
+    $before = u15BankEvidence($fixture);
+    foreach ([
+        fn () => app(MoveWorkflow::class)->resetToDraft($payment->move),
+        fn () => app(MoveWorkflow::class)->reverse(collect([$payment->move])),
+        fn () => app(Reconciler::class)->reconcile(collect([$liquidity])),
+    ] as $action) {
+        expect($action)->toThrow(ValidationException::class);
+        expect(u15BankEvidence($fixture))->toBe($before);
+    }
+
+    app(MoveWorkflow::class)->resetToDraft($invoice);
+
+    expect($invoice->fresh()->state)->toBe(MoveState::DRAFT)
+        ->and((float) $invoice->fresh()->amount_residual)->toBe(80.0)
+        ->and($payment->fresh()->is_reconciled)->toBeFalse()
+        ->and($payment->move->fresh()->state)->toBe(MoveState::POSTED)
+        ->and(PartialReconcile::where('credit_move_id', $counterpart->id)->exists())->toBeFalse()
+        ->and(u15BankEvidence($fixture))->toBe($before);
+})->with(['open bank period' => false, 'completed bank period' => true]);
+
+it('protects active bank allocations without a linkage stamp while allowing their AR counterpart', function (string $clearing): void {
+    $fixture = u15ClearedPayment($clearing);
+    ['invoice' => $invoice, 'payment' => $payment, 'liquidity' => $liquidity, 'counterpart' => $counterpart, 'match' => $match] = $fixture;
+    $before = u15BankEvidence($fixture);
+    expect($liquidity->fresh()->statement_id)->toBeNull()
+        ->and($liquidity->fresh()->matching_number)->toBeNull();
+    foreach ([
+        fn () => app(MoveWorkflow::class)->resetToDraft($payment->move),
+        fn () => app(MoveWorkflow::class)->reverse(collect([$payment->move])),
+        fn () => app(Reconciler::class)->reconcile(collect([$liquidity])),
+    ] as $action) {
+        expect($action)->toThrow(ValidationException::class, 'Remove the bank reconciliation match');
+        expect(u15BankEvidence($fixture))->toBe($before);
+    }
+    app(Reconciler::class)->unReconcile(PartialReconcile::where('credit_move_id', $counterpart->id)->sole());
+    app(Reconciler::class)->reconcile($invoice->fresh('paymentTermLines')->paymentTermLines->push($counterpart->fresh()));
+    expect((float) $invoice->fresh()->amount_residual)->toBe(0.0)
+        ->and(u15BankEvidence($fixture))->toBe($before);
+    if ($clearing === 'proposed') {
+        app(MatchService::class)->reject($match);
+    } else {
+        app(MatchService::class)->unmatch($match, 'Correcting this bank allocation');
+    }
+    app(MoveWorkflow::class)->resetToDraft($payment->move);
+    expect($payment->move->fresh()->state)->toBe(MoveState::DRAFT)
+        ->and((float) $invoice->fresh()->amount_residual)->toBe(80.0);
+})->with(['partial confirmed allocation' => 'partial', 'proposed allocation' => 'proposed']);
 
 it('records accounting provenance and hides a fully matched ledger line from both candidate screens', function (): void {
     $reconciliation = u13Reconciliation();

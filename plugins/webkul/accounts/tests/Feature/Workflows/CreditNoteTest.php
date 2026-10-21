@@ -7,6 +7,8 @@ use Webkul\Account\Enums\DocumentType;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\MoveType;
 use Webkul\Account\Enums\PaymentState;
+use Webkul\Account\Models\Move;
+use Webkul\Account\Models\MoveLine;
 use Webkul\Account\Models\TaxPartition;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
@@ -119,4 +121,47 @@ it('reverses and cancels a posted invoice in one step, marking it reversed', fun
     expect($reversal->refresh()->state)->toBe(MoveState::POSTED)
         ->and($invoice->refresh()->payment_state)->toBe(PaymentState::REVERSED)
         ->and((float) abs($invoice->amount_residual))->toBe(0.0);
+});
+
+it('rolls back a direct reversal when copying a journal line fails', function () {
+    $invoice = AccountHelper::invoice(MoveType::OUT_INVOICE, $this->partner);
+    AccountHelper::productLine($invoice, $this->income, qty: 2, priceUnit: 100);
+    AccountHelper::post($invoice);
+    $moveCount = Move::count();
+    $lineCount = MoveLine::count();
+
+    MoveLine::created(function (MoveLine $line) use ($invoice): void {
+        if ($line->move?->reversed_entry_id === $invoice->id) {
+            throw new RuntimeException('Reversal line failed');
+        }
+    });
+
+    expect(fn () => AccountHelper::reverse($invoice))->toThrow(RuntimeException::class, 'Reversal line failed');
+    expect(Move::count())->toBe($moveCount)
+        ->and(MoveLine::count())->toBe($lineCount)
+        ->and(Move::where('reversed_entry_id', $invoice->id)->exists())->toBeFalse();
+});
+
+it('rejects a stale reversal after the source is no longer posted', function () {
+    $invoice = AccountHelper::invoice(MoveType::OUT_INVOICE, $this->partner);
+    AccountHelper::productLine($invoice, $this->income, qty: 2, priceUnit: 100);
+    AccountHelper::post($invoice);
+    DB::table('accounts_account_moves')->where('id', $invoice->id)->update(['state' => MoveState::CANCEL->value]);
+    $moveCount = Move::count();
+
+    expect(fn () => AccountHelper::reverse($invoice))->toThrow(Exception::class, 'Only posted journal entries');
+    expect(Move::count())->toBe($moveCount);
+});
+
+it('keeps a registered payment intact when reverse and cancel is requested', function () {
+    $invoice = AccountHelper::invoice(MoveType::OUT_INVOICE, $this->partner);
+    AccountHelper::productLine($invoice, $this->income, qty: 2, priceUnit: 100);
+    AccountHelper::post($invoice);
+    AccountHelper::pay($invoice, 60);
+    $moveCount = Move::count();
+
+    expect(fn () => AccountHelper::reverseAndCancel($invoice))->toThrow(Exception::class, 'A paid journal entry cannot be reversed and cancelled');
+    expect(Move::count())->toBe($moveCount)
+        ->and($invoice->matchedPayments()->count())->toBe(1)
+        ->and((float) $invoice->refresh()->amount_residual)->toBe(140.0);
 });

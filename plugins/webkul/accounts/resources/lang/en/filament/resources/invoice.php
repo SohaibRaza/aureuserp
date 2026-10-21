@@ -288,13 +288,20 @@ return [
     ],
 
     'summary' => [
+        'notifications' => [
+            'match-failed'        => 'Payment could not be matched',
+            'remove-failed'       => 'Payment match could not be removed',
+            'payment-unavailable' => 'This payment is no longer available for this invoice. Refresh and choose an outstanding payment.',
+            'match-unavailable'   => 'This payment match is no longer available for this invoice. Refresh and try again.',
+        ],
+
         'actions' => [
             'reconcile' => [
-                'label' => 'Add',
+                'label' => 'Match payment',
             ],
 
             'unreconcile' => [
-                'label' => 'Unlink',
+                'label' => 'Remove payment match',
             ],
         ],
     ],

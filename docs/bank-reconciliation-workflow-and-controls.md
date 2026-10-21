@@ -8,7 +8,7 @@
 | `in_progress` | Preparation, importing, matching, and treatments | `review` |
 | `review` | Evidence frozen for review | `completed` or `in_progress` |
 | `completed` | Final snapshot is authoritative and workspace is locked | `reopen_requested` |
-| `reopen_requested` | Correction request awaits approval | `reopened` after approval |
+| `reopen_requested` | Correction request awaits approval; the workspace and completed accounting period remain closed | `reopened` after approval |
 | `reopened` | Historical period is editable under correction controls | `review` after rework |
 | `stale` | Conclusion invalidated by prior-period change | controlled stale rework |
 | `cancelled` | Abandoned session retained for audit | terminal/read-only |
@@ -54,3 +54,7 @@ Every public financial mutation must recheck, inside the service path:
 - locked current database state inside a transaction.
 
 Failure must leave no partial accounting or reconciliation evidence and must produce a user-visible explanation in the UI.
+
+Requesting a reopen does not permit posting, cancellation, reset or line reconciliation within the completed bank period. Only approved reopening removes that period's restriction; any other completed period covering the same account and date still applies. Accounting changes and reconciliation completion also share a transaction lock for the company, so completion cannot publish a snapshot while an accounting change is still in progress. A competing action receives a retry message.
+
+Refreshing a payment's reconciliation status updates only its state and matching flags. It must not recompute its historical payment inputs. A later editor does not replace the payment's original creator, and a posted payment keeps the destination account recorded against its journal entry even if the partner's default account changes. Reconciliation actions use the permissions of the module in which the user is working: the Invoices summary uses Invoices document policies, while the Accounts summary uses Accounts document policies.
