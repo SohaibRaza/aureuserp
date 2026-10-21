@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -138,6 +139,17 @@ return new class extends Migration
             $table->index(['trip_id', 'stop_id', 'recorded_at'], 'logistics_receipt_stop_time_idx');
         });
 
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('logistics_load_revisions');
+            ImmutableHistory::protect('logistics_load_items');
+            ImmutableHistory::protect('logistics_load_verification_events');
+            ImmutableHistory::protect('logistics_release_batches');
+            ImmutableHistory::protect('logistics_receipt_observations');
+            ImmutableHistory::protect('logistics_trip_move_links');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION logistics_outbound_records_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -155,6 +167,8 @@ SQL);
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE logistics_trips, logistics_trip_stops, logistics_trip_allocations, logistics_trip_move_links, logistics_load_revisions, logistics_load_verification_events, logistics_load_items, logistics_release_batches, logistics_receipt_observations IN ACCESS EXCLUSIVE MODE');
 

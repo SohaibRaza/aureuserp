@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -21,7 +22,13 @@ return new class extends Migration
             $table->date('effective_date');
             $table->decimal('amount', 18, 4);
             $table->text('notes')->nullable();
-            $table->foreignId('creator_id')->nullable()->constrained('users')->nullOnDelete();
+            $creator = $table->foreignId('creator_id')->nullable()->constrained('users');
+            if (DB::getDriverName() === 'mysql') {
+                // MySQL FK actions bypass triggers; retain the immutable recorded actor.
+                $creator->restrictOnDelete();
+            } else {
+                $creator->nullOnDelete();
+            }
             $table->timestamps();
 
             // An opening balance establishes the first controlled GL baseline for a bank account.
@@ -34,6 +41,15 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('recon_bank_opening_balances');
+        ImmutableHistory::refuseMySqlRollback();
+
+        DB::transaction(function (): void {
+            DB::statement('LOCK TABLE recon_bank_opening_balances IN ACCESS EXCLUSIVE MODE');
+            if (DB::table('recon_bank_opening_balances')->exists()) {
+                throw new RuntimeException('Saved bank opening evidence requires forward recovery; rollback cannot discard that history.');
+            }
+
+            Schema::dropIfExists('recon_bank_opening_balances');
+        });
     }
 };

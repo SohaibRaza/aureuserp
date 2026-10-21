@@ -1,22 +1,36 @@
 <?php
 
 use Illuminate\Support\Facades\DB;
+use Shafique\Logistics\Models\CompanyControl;
 use Shafique\Logistics\Models\ControlChange;
 use Shafique\Logistics\Services\OperationalControl;
 use Symfony\Component\Process\Process;
+use Webkul\Support\Models\Company;
+use Webkul\Support\Services\CompanyContext;
 
 require_once __DIR__.'/../../../../webkul/support/tests/Helpers/SecurityHelper.php';
 
 it('serializes suspension with the entire authorized business transaction', function (string $firstAction): void {
     if (! config('testing.run_reconciliation_concurrency')) {
-        test()->markTestSkipped('Run explicitly on the isolated PostgreSQL test database.');
+        test()->markTestSkipped('Run explicitly on an isolated PostgreSQL or MySQL test database.');
     }
-    expect(DB::connection()->getDriverName())->toBe('pgsql');
-    $database = DB::connection()->getDatabaseName();
+    $connection = DB::connection();
+    $driver = $connection->getDriverName();
+    expect($driver)->toBeIn(['pgsql', 'mysql']);
+    $database = $connection->getDatabaseName();
+    $connectionConfig = config("database.connections.{$driver}");
     expect($database)->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
     TestBootstrapHelper::ensurePluginInstalled('logistics');
     $user = SecurityHelper::authenticateWithPermissions(['view_any_logistics_module::setting', 'update_logistics_module::setting']);
-    $companyId = $user->default_company_id;
+    $company = Company::factory()->create([
+        'is_active'   => true,
+        'currency_id' => DB::table('companies')->where('id', $user->default_company_id)->value('currency_id'),
+    ]);
+    $companyId = $company->id;
+    $user->forceFill(['default_company_id' => $companyId])->saveQuietly();
+    $user->allowedCompanies()->sync([$companyId]);
+    session([CompanyContext::SESSION_KEY => [$companyId]]);
+    app()->forgetInstance(CompanyContext::class);
     app(OperationalControl::class)->change($user, $companyId, true, 'Synthetic start');
     $originalName = DB::table('companies')->where('id', $companyId)->value('name');
     while (DB::transactionLevel() > 0) {
@@ -36,7 +50,8 @@ $number = $argv[3];
 $action = $argv[4];
 $companyId = (int) $argv[6];
 $connection = Illuminate\Support\Facades\DB::connection();
-file_put_contents($directory.'/ready-'.$number, (string) $connection->selectOne('SELECT pg_backend_pid() AS pid')->pid);
+$identityQuery = $connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS id' : 'SELECT CONNECTION_ID() AS id';
+file_put_contents($directory.'/ready-'.$number, (string) $connection->selectOne($identityQuery)->id);
 try {
     $connection->transaction(function () use ($directory, $number, $action, $companyId): void {
         $control = app(Shafique\Logistics\Services\OperationalControl::class);
@@ -77,10 +92,18 @@ PHP;
     try {
         foreach ([1 => $firstAction, 2 => $firstAction === 'command' ? 'suspend' : 'command'] as $number => $action) {
             $process = new Process([PHP_BINARY, '-d', 'memory_limit=512M', '-r', $worker, base_path(), $directory, (string) $number, $action, (string) $user->id, (string) $companyId], base_path(), [
-                ...$_ENV, 'APP_ENV' => 'testing', 'DB_CONNECTION' => 'pgsql',
-                'DB_HOST'           => config('database.connections.pgsql.host'), 'DB_PORT' => (string) config('database.connections.pgsql.port'),
-                'DB_USERNAME'       => config('database.connections.pgsql.username'), 'DB_PASSWORD' => config('database.connections.pgsql.password'),
-                'DB_DATABASE'       => $database, 'AUREUSERP_TEST_REUSE_DATABASE' => '1',
+                ...$_ENV,
+                'APP_ENV'                       => 'testing',
+                'DB_CONNECTION'                 => $driver,
+                'DB_HOST'                       => (string) ($connectionConfig['host'] ?? ''),
+                'DB_PORT'                       => (string) ($connectionConfig['port'] ?? ''),
+                'DB_SOCKET'                     => (string) ($connectionConfig['unix_socket'] ?? ''),
+                'DB_URL'                        => '',
+                'DB_USERNAME'                   => (string) ($connectionConfig['username'] ?? ''),
+                'DB_PASSWORD'                   => (string) ($connectionConfig['password'] ?? ''),
+                'DB_DATABASE'                   => $database,
+                'TEST_TOKEN'                    => '',
+                'AUREUSERP_TEST_REUSE_DATABASE' => '1',
             ], timeout: 40);
             $processes[] = $process;
             $process->start();
@@ -89,9 +112,24 @@ PHP;
                 $waitFor(fn (): bool => file_exists($directory.'/holding'));
             }
         }
-        $firstPid = (int) file_get_contents($directory.'/ready-1');
-        $secondPid = (int) file_get_contents($directory.'/ready-2');
-        $waitFor(fn (): bool => (bool) DB::selectOne('SELECT ? = ANY(pg_blocking_pids(?)) AS blocked', [$firstPid, $secondPid])->blocked);
+        $firstConnectionId = (int) file_get_contents($directory.'/ready-1');
+        $secondConnectionId = (int) file_get_contents($directory.'/ready-2');
+        $waitFor(function () use ($driver, $firstConnectionId, $secondConnectionId): bool {
+            if ($driver === 'pgsql') {
+                return (bool) DB::selectOne('SELECT ? = ANY(pg_blocking_pids(?)) AS blocked', [$firstConnectionId, $secondConnectionId])->blocked;
+            }
+
+            return (bool) DB::selectOne('SELECT EXISTS (
+                SELECT 1
+                FROM performance_schema.data_lock_waits AS waits
+                JOIN performance_schema.threads AS requesting
+                    ON requesting.THREAD_ID = waits.REQUESTING_THREAD_ID
+                JOIN performance_schema.threads AS blocking
+                    ON blocking.THREAD_ID = waits.BLOCKING_THREAD_ID
+                WHERE requesting.PROCESSLIST_ID = ?
+                    AND blocking.PROCESSLIST_ID = ?
+            ) AS blocked', [$secondConnectionId, $firstConnectionId])->blocked;
+        });
         touch($directory.'/release');
         $outcomes = [];
         foreach ($processes as $process) {
@@ -103,7 +141,7 @@ PHP;
             ->and($outcomes[1]['result'])->toBe($firstAction === 'command' ? 'accepted' : 'rejected')
             ->and(DB::table('companies')->where('id', $companyId)->value('name'))
             ->toBe($firstAction === 'command' ? 'Synthetic committed Logistics work' : $originalName)
-            ->and(DB::table('logistics_company_controls')->where('company_id', $companyId)->value('accept_new_activity'))->toBeFalse()
+            ->and(CompanyControl::query()->where('company_id', $companyId)->sole()->accept_new_activity)->toBeFalse()
             ->and(ControlChange::query()->where('company_id', $companyId)->orderBy('revision')->pluck('revision')->all())->toBe([1, 2]);
         if ($firstAction === 'suspend') {
             expect($outcomes[1]['error'])->toBe(__('logistics::settings.activity_suspended'));
@@ -120,7 +158,8 @@ PHP;
         }
         rmdir($directory);
         DB::table('companies')->where('id', $companyId)->update(['name' => $originalName]);
-        DB::table('logistics_control_changes')->where('company_id', $companyId)->delete();
+        // Committed immutable history belongs to this dedicated synthetic Company.
+        // The private database teardown removes it after the concurrency selection.
         DB::table('logistics_company_controls')->where('company_id', $companyId)->delete();
     }
 })->with(['command', 'suspend']);

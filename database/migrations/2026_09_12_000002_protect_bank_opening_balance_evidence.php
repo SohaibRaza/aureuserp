@@ -2,11 +2,18 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('recon_bank_opening_balances');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION recon_bank_opening_balance_immutable() RETURNS trigger AS $$
             BEGIN
@@ -23,6 +30,8 @@ return new class extends Migration
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::unprepared('DROP TRIGGER IF EXISTS recon_bank_opening_balance_immutable_trigger ON recon_bank_opening_balances');
         DB::unprepared('DROP FUNCTION IF EXISTS recon_bank_opening_balance_immutable()');
     }

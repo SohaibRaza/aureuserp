@@ -236,6 +236,8 @@ it('prevents both model and direct SQL changes to saved results', function (): v
     Inventory::completeTransfer($operation);
     $result = $operation->terminalResult;
     expect(fn () => $result->updateQuietly(['action' => 'cancel']))->toThrow(ValidationException::class);
+    expect(fn () => DB::transaction(fn () => DB::table('inventories_operation_results')->where('id', $result->id)->update(['action' => 'cancel'])))
+        ->toThrow(QueryException::class);
     expect(fn () => DB::transaction(fn () => DB::table('inventories_operation_results')->where('id', $result->id)->delete()))
         ->toThrow(QueryException::class);
 });
@@ -248,7 +250,9 @@ it('refuses to roll back a saved operation result without dropping its history t
 
     expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
     expect(DB::table('inventories_operation_results')->where('id', $result->id)->exists())->toBeTrue()
-        ->and(DB::table('pg_trigger')->where('tgname', 'inventories_operation_results_immutable')->exists())->toBeTrue();
+        ->and(DB::getDriverName() === 'pgsql'
+            ? DB::table('pg_trigger')->where('tgname', 'inventories_operation_results_immutable')->exists()
+            : DB::table('information_schema.TRIGGERS')->whereRaw('TRIGGER_SCHEMA = DATABASE()')->where('EVENT_OBJECT_TABLE', 'inventories_operation_results')->count() === 2)->toBeTrue();
 });
 
 it('prevents quiet changes and deletion of settled lines and moves', function (): void {

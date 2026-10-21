@@ -2,7 +2,9 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -52,10 +54,16 @@ return new class extends Migration
             $table->timestampTz('created_at');
             $table->index(['approval_id', 'id'], 'logistics_approval_event_history_idx');
         });
+
+        ImmutableHistory::protect('logistics_command_records');
+        ImmutableHistory::protect('logistics_scoped_approvals');
+        ImmutableHistory::protect('logistics_approval_events');
     }
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE logistics_command_records, logistics_scoped_approvals, logistics_approval_events IN ACCESS EXCLUSIVE MODE');
 
@@ -68,6 +76,9 @@ return new class extends Migration
             Schema::dropIfExists('logistics_approval_events');
             Schema::dropIfExists('logistics_scoped_approvals');
             Schema::dropIfExists('logistics_command_records');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_command_records_immutable()');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_scoped_approvals_immutable()');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_approval_events_immutable()');
         });
     }
 };

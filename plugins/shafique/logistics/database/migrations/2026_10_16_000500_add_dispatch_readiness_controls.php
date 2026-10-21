@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -50,10 +51,23 @@ return new class extends Migration
         Schema::table('logistics_load_revisions', function (Blueprint $table): void {
             $table->foreignId('source_location_id')->nullable()->constrained('inventories_locations')->restrictOnDelete();
         });
+        if (DB::getDriverName() === 'mysql') {
+            Schema::table('logistics_release_batches', function (Blueprint $table): void {
+                // InnoDB needs another trip_id index before removing the one used by its foreign key.
+                $table->index('trip_id', 'logistics_release_trip_index');
+            });
+        }
         Schema::table('logistics_release_batches', function (Blueprint $table): void {
             $table->dropUnique('logistics_trip_single_release_unique');
             $table->unique('load_revision_id', 'logistics_load_single_release_unique');
         });
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('logistics_dispatch_policies');
+            ImmutableHistory::protect('logistics_dispatch_checks');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
 CREATE TRIGGER logistics_dispatch_policies_immutable BEFORE UPDATE OR DELETE ON logistics_dispatch_policies FOR EACH ROW EXECUTE FUNCTION logistics_outbound_records_immutable();
 CREATE TRIGGER logistics_dispatch_checks_immutable BEFORE UPDATE OR DELETE ON logistics_dispatch_checks FOR EACH ROW EXECUTE FUNCTION logistics_outbound_records_immutable();
@@ -62,6 +76,8 @@ SQL);
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE logistics_dispatch_policies, logistics_dispatch_checks, logistics_receipt_observations, logistics_release_batches, logistics_load_revisions IN ACCESS EXCLUSIVE MODE');
 

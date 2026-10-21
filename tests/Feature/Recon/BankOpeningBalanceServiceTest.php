@@ -6,6 +6,7 @@ use App\Models\Recon\BankOpeningBalance;
 use App\Models\Recon\BankReconciliation;
 use App\Services\Recon\BankOpeningBalanceService;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Webkul\Account\Enums\AccountType;
 use Webkul\Account\Models\Account;
@@ -199,4 +200,12 @@ it('keeps opening balance evidence immutable', function (): void {
 
     expect(fn () => $opening->update(['amount' => '200.0000']))
         ->toThrow(RuntimeException::class, 'immutable');
+    expect(fn () => DB::transaction(fn () => DB::table('recon_bank_opening_balances')->where('id', $opening->id)->update(['amount' => '200.0000'])))
+        ->toThrow(QueryException::class);
+    expect(fn () => DB::transaction(fn () => DB::table('recon_bank_opening_balances')->where('id', $opening->id)->delete()))
+        ->toThrow(QueryException::class);
+    $migration = require base_path('database/migrations/2026_09_11_000001_create_recon_bank_opening_balances_table.php');
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
+    expect(DB::table('recon_bank_opening_balances')->where('id', $opening->id)->exists())->toBeTrue();
+
 });

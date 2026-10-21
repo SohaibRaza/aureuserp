@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -23,6 +24,12 @@ return new class extends Migration
             $table->unique(['reconciliation_id', 'payload_hash'], 'recon_snapshot_hash_unique');
         });
 
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('recon_reconciliation_snapshots');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION recon_snapshot_immutable() RETURNS trigger AS $$
             BEGIN
@@ -38,8 +45,17 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::unprepared('DROP TRIGGER IF EXISTS recon_snapshot_immutable_trigger ON recon_reconciliation_snapshots');
-        DB::unprepared('DROP FUNCTION IF EXISTS recon_snapshot_immutable()');
-        Schema::dropIfExists('recon_reconciliation_snapshots');
+        ImmutableHistory::refuseMySqlRollback();
+
+        DB::transaction(function (): void {
+            DB::statement('LOCK TABLE recon_reconciliation_snapshots IN ACCESS EXCLUSIVE MODE');
+            if (DB::table('recon_reconciliation_snapshots')->exists()) {
+                throw new RuntimeException('Saved reconciliation snapshots require forward recovery; rollback cannot discard that history.');
+            }
+
+            DB::unprepared('DROP TRIGGER IF EXISTS recon_snapshot_immutable_trigger ON recon_reconciliation_snapshots');
+            DB::unprepared('DROP FUNCTION IF EXISTS recon_snapshot_immutable()');
+            Schema::dropIfExists('recon_reconciliation_snapshots');
+        });
     }
 };

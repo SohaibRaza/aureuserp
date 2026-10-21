@@ -43,6 +43,7 @@ class LogisticsServiceProvider extends PackageServiceProvider
                 self::OUTBOUND_TRIP_EXECUTION_MIGRATION,
                 '2026_10_16_000500_add_dispatch_readiness_controls',
                 '2026_10_21_000100_add_trip_recovery_history',
+                '2026_10_21_000200_protect_existing_logistics_history',
             ])
             ->runsMigrations()
             ->hasSeeder('Shafique\\Logistics\\LogisticsDatabaseSeeder')

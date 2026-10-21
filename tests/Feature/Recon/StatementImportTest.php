@@ -50,6 +50,45 @@ it('accepts mapped csv decimals and preserves source dates and evidence', functi
         ->toBe('2026-09-04');
 });
 
+it('preserves case-sensitive bank transaction identities while rejecting an exact external id replay', function (): void {
+    $importer = app(StatementImporter::class);
+    $firstReconciliation = importReconciliation();
+    $first = $importer->importCsv($firstReconciliation, [[
+        'date' => '2026-09-03', 'amount' => '1.00', 'reference' => 'CASE-1', 'external_id' => 'Txn-A',
+    ]], '10.00', '11.00');
+    expect($first->status)->toBe('accepted');
+    $firstReconciliation->update(['status' => 'completed']);
+    $firstReconciliation->statement()->update(['is_completed' => true]);
+
+    $secondReconciliation = BankReconciliation::query()->create([
+        ...validBankReconciliationAttributes($firstReconciliation->journal),
+        'period_start' => '2026-10-01',
+        'period_end'   => '2026-10-31',
+    ]);
+    $second = $importer->importCsv($secondReconciliation, [[
+        'date' => '2026-10-04', 'amount' => '2.00', 'reference' => 'CASE-2', 'external_id' => 'txn-a',
+    ]], '11.00', '13.00');
+    expect($second->status)->toBe('accepted')
+        ->and($second->lines_duplicate)->toBe(0)
+        ->and(StatementLine::query()->whereIn('import_batch_id', [$first->id, $second->id])->orderBy('id')->pluck('external_id')->all())
+        ->toBe(['Txn-A', 'txn-a']);
+    $secondReconciliation->update(['status' => 'completed']);
+    $secondReconciliation->statement()->update(['is_completed' => true]);
+
+    $thirdReconciliation = BankReconciliation::query()->create([
+        ...validBankReconciliationAttributes($firstReconciliation->journal),
+        'period_start' => '2026-11-01',
+        'period_end'   => '2026-11-30',
+    ]);
+    $third = $importer->importCsv($thirdReconciliation, [[
+        'date' => '2026-11-05', 'amount' => '3.00', 'reference' => 'CASE-3', 'external_id' => 'Txn-A',
+    ]], '13.00', '16.00');
+    expect($third->status)->toBe('quarantined')
+        ->and($third->lines_duplicate)->toBe(1)
+        ->and($third->lines_imported)->toBe(0)
+        ->and(StatementLine::query()->where('import_batch_id', $third->id)->exists())->toBeFalse();
+});
+
 it('quarantines a transaction date outside the preserved reconciliation period', function (): void {
     $reconciliation = importReconciliation();
 

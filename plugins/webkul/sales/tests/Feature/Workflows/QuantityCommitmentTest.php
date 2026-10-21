@@ -166,7 +166,9 @@ it('refuses to roll back confirmed quantity history without dropping its records
 
     expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
     expect(DB::table('sales_quantity_commitments')->where('id', $commitment->id)->exists())->toBeTrue()
-        ->and(DB::table('pg_trigger')->where('tgname', 'sales_quantity_commitments_immutable')->exists())->toBeTrue();
+        ->and(DB::getDriverName() === 'pgsql'
+            ? DB::table('pg_trigger')->where('tgname', 'sales_quantity_commitments_immutable')->exists()
+            : DB::table('information_schema.TRIGGERS')->whereRaw('TRIGGER_SCHEMA = DATABASE()')->where('EVENT_OBJECT_TABLE', 'sales_quantity_commitments')->count() === 2)->toBeTrue();
 });
 
 it('rejects unknown or incompatible units and preserves the draft order without deliveries', function (): void {

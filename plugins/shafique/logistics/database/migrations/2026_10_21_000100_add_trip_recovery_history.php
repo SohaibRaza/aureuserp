@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -28,20 +29,32 @@ return new class extends Migration
             $table->timestampTz('recorded_at');
             $table->index(['trip_id', 'id']);
         });
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('logistics_trip_recovery_events');
+
+            return;
+        }
+
         DB::unprepared('CREATE TRIGGER logistics_trip_recovery_events_immutable BEFORE UPDATE OR DELETE ON logistics_trip_recovery_events FOR EACH ROW EXECUTE FUNCTION logistics_outbound_records_immutable()');
     }
 
     public function down(): void
     {
-        if (DB::table('logistics_trip_recovery_events')->exists()
-            || DB::table('logistics_load_items')->whereNotNull('native_line_snapshot')->exists()
-            || DB::table('logistics_load_items as items')->leftJoin('inventories_move_lines as lines', 'lines.id', '=', 'items.move_line_id')->whereNull('lines.id')->exists()) {
-            throw new RuntimeException('Accepted load snapshots, recovery history or removed reservation rows require forward recovery; rollback cannot discard that history.');
-        }
-        Schema::dropIfExists('logistics_trip_recovery_events');
-        Schema::table('logistics_load_items', function (Blueprint $table): void {
-            $table->foreign('move_line_id')->references('id')->on('inventories_move_lines')->restrictOnDelete();
-            $table->dropColumn('native_line_snapshot');
+        ImmutableHistory::refuseMySqlRollback();
+
+        DB::transaction(function (): void {
+            DB::statement('LOCK TABLE logistics_trip_recovery_events, logistics_load_items, inventories_move_lines IN ACCESS EXCLUSIVE MODE');
+
+            if (DB::table('logistics_trip_recovery_events')->exists()
+                || DB::table('logistics_load_items')->whereNotNull('native_line_snapshot')->exists()
+                || DB::table('logistics_load_items as items')->leftJoin('inventories_move_lines as lines', 'lines.id', '=', 'items.move_line_id')->whereNull('lines.id')->exists()) {
+                throw new RuntimeException('Accepted load snapshots, recovery history or removed reservation rows require forward recovery; rollback cannot discard that history.');
+            }
+            Schema::dropIfExists('logistics_trip_recovery_events');
+            Schema::table('logistics_load_items', function (Blueprint $table): void {
+                $table->foreign('move_line_id')->references('id')->on('inventories_move_lines')->restrictOnDelete();
+                $table->dropColumn('native_line_snapshot');
+            });
         });
     }
 };

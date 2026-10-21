@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Shafique\Logistics\Models\CompanyControl;
@@ -43,6 +44,14 @@ it('returns the saved result for a same-intent retry without running the operati
     expect($first)->toBe(['evidence_id' => 91])
         ->and($retry)->toBe($first)
         ->and($calls)->toBe(1);
+
+    $id = DB::table('logistics_command_records')->where('company_id', $companyId)->value('id');
+    expect(fn () => DB::transaction(fn () => DB::table('logistics_command_records')->where('id', $id)->update(['result' => '{}'])))
+        ->toThrow(QueryException::class);
+    expect(fn () => DB::transaction(fn () => DB::table('logistics_command_records')->where('id', $id)->delete()))
+        ->toThrow(QueryException::class);
+    expect($run(['purpose' => 'delivery_receipt', 'sha256' => str_repeat('a', 64)]))->toBe($first);
+
 });
 
 it('rejects a changed intent under the same command identity without effects', function (): void {

@@ -153,10 +153,12 @@ it('keeps a deletion with an unrecorded outcome unresolved rather than inferring
         ->and($evidence->lifecycleEvents()->where('event_type', 'disposal_integrity_failed')->exists())->toBeTrue();
 });
 
-it('holds the evidence row lock through deletion against an independent PostgreSQL hold request', function (): void {
-    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
-        test()->markTestSkipped('Requires the opted-in private PostgreSQL runner.');
+it('holds the evidence row lock through deletion against an independent hold request', function (): void {
+    if (! config('testing.run_reconciliation_concurrency')) {
+        test()->markTestSkipped('Requires the opted-in private PostgreSQL or MySQL runner.');
     }
+    $driver = DB::connection()->getDriverName();
+    expect($driver)->toBeIn(['pgsql', 'mysql']);
     expect(DB::connection()->getDatabaseName())->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
     extract(expiredEvidenceForDisposal());
     while (DB::connection()->transactionLevel() > 0) {
@@ -165,18 +167,26 @@ it('holds the evidence row lock through deletion against an independent PostgreS
     $originalConnection = DB::getDefaultConnection();
     config(['database.connections.evidence_competitor' => config('database.connections.'.$originalConnection)]);
     $competitor = DB::connection('evidence_competitor');
-    $competitor->statement("SET lock_timeout = '200ms'");
-    expect($competitor->selectOne('SELECT pg_backend_pid() AS pid')->pid)
-        ->not->toBe(DB::selectOne('SELECT pg_backend_pid() AS pid')->pid);
+    if ($driver === 'pgsql') {
+        $competitor->statement("SET lock_timeout = '200ms'");
+        $identityQuery = 'SELECT pg_backend_pid() AS id';
+    } else {
+        $competitor->statement('SET SESSION innodb_lock_wait_timeout = 1');
+        $identityQuery = 'SELECT CONNECTION_ID() AS id';
+    }
+    expect((int) $competitor->selectOne($identityQuery)->id)
+        ->not->toBe((int) DB::selectOne($identityQuery)->id);
     $disk = Storage::disk('logistics-evidence');
     $proxy = Mockery::mock($disk);
     $blocked = false;
-    $proxy->shouldReceive('delete')->once()->andReturnUsing(function (string $path) use ($disk, $store, $actor, $evidence, $originalConnection, &$blocked): bool {
+    $proxy->shouldReceive('delete')->once()->andReturnUsing(function (string $path) use ($disk, $store, $actor, $evidence, $originalConnection, $driver, &$blocked): bool {
         DB::setDefaultConnection('evidence_competitor');
         try {
             $store->placeLegalHold($actor, $evidence->id, 'Competing hold request');
         } catch (QueryException $exception) {
-            $blocked = $exception->getCode() === '55P03';
+            $blocked = $driver === 'pgsql'
+                ? $exception->getCode() === '55P03'
+                : (int) ($exception->errorInfo[1] ?? 0) === 1205;
             if (! $blocked) {
                 throw $exception;
             }

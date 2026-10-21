@@ -46,7 +46,7 @@ function testBankJournal(bool $dedicated = false): Journal
         'updated_at'          => now(),
     ]);
 
-    $journal = Journal::query()->where('type', 'bank')->firstOrFail();
+    $journal = Journal::query()->where('type', 'bank')->orderBy('id')->firstOrFail();
     if ($dedicated) {
         $account = Account::query()->withoutGlobalScopes()->findOrFail($journal->default_account_id)->replicate();
         $account->forceFill([

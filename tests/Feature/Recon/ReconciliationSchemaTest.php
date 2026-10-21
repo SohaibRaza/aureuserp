@@ -135,12 +135,15 @@ it('prevents reconciliation snapshots from being updated through direct database
         'created_at'        => now(),
     ]);
 
-    expect(fn () => DB::table('recon_reconciliation_snapshots')
+    expect(fn () => DB::transaction(fn () => DB::table('recon_reconciliation_snapshots')
         ->where('id', $snapshotId)
-        ->update(['payload_hash' => hash('sha256', 'changed')]))
+        ->update(['payload_hash' => hash('sha256', 'changed')])))
         ->toThrow(QueryException::class)
-        ->and(fn () => DB::table('recon_reconciliation_snapshots')->where('id', $snapshotId)->delete())
+        ->and(fn () => DB::transaction(fn () => DB::table('recon_reconciliation_snapshots')->where('id', $snapshotId)->delete()))
         ->toThrow(QueryException::class);
+    $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_09_07_000007_create_reconciliation_snapshots_table.php');
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
+    expect(DB::table('recon_reconciliation_snapshots')->where('id', $snapshotId)->value('payload_hash'))->toBe(hash('sha256', 'snapshot'));
 });
 
 it('prevents reconciliation events from being updated or deleted through direct database access', function () {
@@ -148,8 +151,12 @@ it('prevents reconciliation events from being updated or deleted through direct 
     BankReconciliation::logEvent($reconciliation, 'test_event', ['source' => 'schema-test']);
     $eventId = $reconciliation->events()->value('id');
 
-    expect(fn () => DB::table('recon_events')->where('id', $eventId)->update(['event' => 'tampered']))
+    expect(fn () => DB::transaction(fn () => DB::table('recon_events')->where('id', $eventId)->update(['event' => 'tampered'])))
         ->toThrow(QueryException::class)
-        ->and(fn () => DB::table('recon_events')->where('id', $eventId)->delete())
+        ->and(fn () => DB::transaction(fn () => DB::table('recon_events')->where('id', $eventId)->delete()))
         ->toThrow(QueryException::class);
+    $migration = require base_path('database/migrations/2026_09_07_000001_create_recon_tables.php');
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
+    expect(DB::table('recon_events')->where('id', $eventId)->value('event'))->toBe('test_event');
+
 });

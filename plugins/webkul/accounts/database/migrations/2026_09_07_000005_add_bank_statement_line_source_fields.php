@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -12,7 +13,10 @@ return new class extends Migration
         Schema::table('accounts_bank_statement_lines', function (Blueprint $table): void {
             $table->date('transaction_date')->nullable();
             $table->date('value_date')->nullable();
-            $table->string('external_id')->nullable();
+            $externalId = $table->string('external_id')->nullable();
+            if (DB::getDriverName() === 'mysql') {
+                $externalId->charset('utf8mb4')->collation('utf8mb4_bin');
+            }
             $table->foreignId('import_batch_id')->nullable();
             $table->char('source_fingerprint', 64)->nullable();
             $table->string('transaction_code')->nullable();
@@ -22,7 +26,7 @@ return new class extends Migration
 
             $table->index(['company_id', 'journal_id', 'transaction_date'], 'bank_statement_line_source_date_index');
             $table->foreign('import_batch_id')->references('id')->on('recon_import_batches')->restrictOnDelete();
-            $table->foreign('duplicate_of_statement_line_id')->references('id')->on('accounts_bank_statement_lines')->restrictOnDelete();
+            $table->foreign('duplicate_of_statement_line_id', DB::getDriverName() === 'mysql' ? 'bank_statement_duplicate_line_foreign' : null)->references('id')->on('accounts_bank_statement_lines')->restrictOnDelete();
         });
 
         DB::table('accounts_bank_statement_lines')->update([
@@ -39,6 +43,13 @@ return new class extends Migration
             )
         SQL);
 
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("CREATE UNIQUE INDEX bank_statement_line_external_id_unique ON accounts_bank_statement_lines (company_id, journal_id, (CASE WHEN import_status = 'accepted' THEN external_id ELSE NULL END))");
+            DB::statement("CREATE UNIQUE INDEX bank_statement_line_fingerprint_unique ON accounts_bank_statement_lines (company_id, journal_id, (CASE WHEN import_status = 'accepted' THEN source_fingerprint ELSE NULL END))");
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             CREATE UNIQUE INDEX bank_statement_line_external_id_unique
             ON accounts_bank_statement_lines (company_id, journal_id, external_id)
@@ -53,6 +64,8 @@ return new class extends Migration
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::statement('DROP INDEX IF EXISTS bank_statement_line_fingerprint_unique');
         DB::statement('DROP INDEX IF EXISTS bank_statement_line_external_id_unique');
 

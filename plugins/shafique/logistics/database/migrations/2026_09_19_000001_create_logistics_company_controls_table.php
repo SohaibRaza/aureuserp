@@ -2,7 +2,9 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -25,11 +27,24 @@ return new class extends Migration
             $table->timestamp('created_at');
             $table->index(['company_id', 'created_at']);
         });
+
+        ImmutableHistory::protect('logistics_control_changes');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('logistics_control_changes');
-        Schema::dropIfExists('logistics_company_controls');
+        ImmutableHistory::refuseMySqlRollback();
+
+        DB::transaction(function (): void {
+            DB::statement('LOCK TABLE logistics_company_controls, logistics_control_changes IN ACCESS EXCLUSIVE MODE');
+
+            if (DB::table('logistics_control_changes')->exists()) {
+                throw new RuntimeException('Accepted control history requires forward recovery; rollback cannot discard that history.');
+            }
+
+            Schema::dropIfExists('logistics_control_changes');
+            Schema::dropIfExists('logistics_company_controls');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_control_changes_immutable()');
+        });
     }
 };

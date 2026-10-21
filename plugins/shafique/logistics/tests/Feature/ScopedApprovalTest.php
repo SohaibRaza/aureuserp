@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +24,7 @@ it('requires a different approver and records an exact scoped approval', functio
     $companyId = $requester->default_company_id;
     CompanyControl::query()->create(['company_id' => $companyId, 'accept_new_activity' => true, 'revision' => 4]);
     $workflow = app(ApprovalWorkflow::class);
+    $validUntil = Carbon::now()->addHour()->setTimezone('+05:00');
     $approval = $workflow->approve(
         $requester,
         $approver,
@@ -33,7 +35,7 @@ it('requires a different approver and records an exact scoped approval', functio
         77,
         3,
         ['quantity' => '12.500'],
-        Carbon::now()->addHour(),
+        $validUntil,
         'Synthetic independent approval',
     );
 
@@ -43,9 +45,20 @@ it('requires a different approver and records an exact scoped approval', functio
         ->and($approval->scope_id)->toBe(77)
         ->and($approval->scope_revision)->toBe(3)
         ->and($approval->control_revision)->toBe(4)
+        ->and($approval->valid_until->getTimestamp())->toBe($validUntil->getTimestamp())
         ->and($approval->requested_by)->toBe($requester->id)
         ->and($approval->approved_by)->toBe($approver->id)
         ->and(ApprovalEvent::query()->sole()->event_type)->toBe('approved');
+
+    foreach (['logistics_scoped_approvals', 'logistics_approval_events'] as $table) {
+        $id = DB::table($table)->where('company_id', $companyId)->value('id');
+        expect($id)->not->toBeNull();
+        expect(fn () => DB::transaction(fn () => DB::table($table)->where('id', $id)->update(['id' => $id])))
+            ->toThrow(QueryException::class);
+        expect(fn () => DB::transaction(fn () => DB::table($table)->where('id', $id)->delete()))
+            ->toThrow(QueryException::class);
+        expect(DB::table($table)->where('id', $id)->exists())->toBeTrue();
+    }
 
     Auth::guard('web')->login($requester);
     Auth::shouldUse('web');
@@ -116,7 +129,7 @@ it('rejects stale scope, expired approval, and values above the approved limit',
     $expiry = Carbon::now()->addHour();
     $approval = app(ApprovalWorkflow::class)->approve($requester, $approver, $companyId, 'approval-issued-20261016-0004', 'release.stock', 'trip', 99, 6, ['quantity' => '5.000'], $expiry, 'Synthetic scope test');
     if ($case === 'expired') {
-        DB::table('logistics_scoped_approvals')->where('id', $approval->id)->update(['valid_until' => now()->subSecond()]);
+        $this->travelTo($expiry->copy()->addSecond());
     }
     if ($case === 'stale control') {
         DB::table('logistics_company_controls')->where('company_id', $companyId)->update(['revision' => 3]);

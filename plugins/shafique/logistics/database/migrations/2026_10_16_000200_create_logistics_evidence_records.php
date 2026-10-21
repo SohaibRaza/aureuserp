@@ -2,7 +2,9 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -64,10 +66,17 @@ return new class extends Migration
             $table->timestampTz('created_at');
             $table->index(['evidence_id', 'created_at'], 'logistics_evidence_hold_history_idx');
         });
+
+        ImmutableHistory::protect('logistics_evidence_retention_policies');
+        ImmutableHistory::protect('logistics_evidence');
+        ImmutableHistory::protect('logistics_evidence_lifecycle_events');
+        ImmutableHistory::protect('logistics_evidence_legal_holds');
     }
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE logistics_evidence_retention_policies, logistics_evidence, logistics_evidence_lifecycle_events, logistics_evidence_legal_holds IN ACCESS EXCLUSIVE MODE');
 
@@ -82,6 +91,10 @@ return new class extends Migration
             Schema::dropIfExists('logistics_evidence_lifecycle_events');
             Schema::dropIfExists('logistics_evidence');
             Schema::dropIfExists('logistics_evidence_retention_policies');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_evidence_retention_policies_immutable()');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_evidence_immutable()');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_evidence_lifecycle_events_immutable()');
+            DB::statement('DROP FUNCTION IF EXISTS logistics_evidence_legal_holds_immutable()');
         });
     }
 };

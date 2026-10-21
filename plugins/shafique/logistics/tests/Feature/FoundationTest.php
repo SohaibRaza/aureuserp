@@ -99,7 +99,7 @@ it('changes only the current Company through the native settings action without 
         ->assertHasNoActionErrors()->assertSee('Active');
 
     expect(app(OperationalControl::class)->authorizeNewActivity($user, $companyId))->toBe(1);
-    $history = ControlChange::query()->sole();
+    $history = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole();
     expect($history->company_id)->toBe($companyId)
         ->and($history->actor_id)->toBe($user->id)
         ->and($history->reason)->toBe('Synthetic rollout authorization')
@@ -109,7 +109,7 @@ it('changes only the current Company through the native settings action without 
     Livewire::test(ModuleSettings::class)
         ->callAction('changeActivity', data: ['accept_new_activity' => false, 'reason' => 'Synthetic suspension'])
         ->assertHasNoActionErrors()->assertSee('Suspended');
-    expect(ControlChange::query()->count())->toBe(2);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(2);
     expect(app(OperationalControl::class)->read($user, $companyId))->toBeFalse();
 });
 
@@ -139,7 +139,7 @@ it('denies direct unauthorized page and service mutations', function (): void {
     Filament::bootCurrentPanel();
     Livewire::test(ModuleSettings::class)->assertForbidden();
     expect(fn () => app(OperationalControl::class)->change($user, $user->default_company_id, true, 'Denied'))->toThrow(AuthorizationException::class);
-    expect(ControlChange::query()->count())->toBe(0);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(0);
 });
 
 it('rejects invalid reasons and rolls back the control when history persistence fails', function (): void {
@@ -155,21 +155,21 @@ it('rejects invalid reasons and rolls back the control when history persistence 
     } finally {
         Event::forget($event);
     }
-    expect(DB::table('logistics_company_controls')->count())->toBe(0)
-        ->and(ControlChange::query()->count())->toBe(0);
+    expect(DB::table('logistics_company_controls')->where('company_id', $user->default_company_id)->count())->toBe(0)
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(0);
     $control->change($user, $user->default_company_id, true, 'Successful retry');
     $control->change($user, $user->default_company_id, true, 'Identical state retry');
-    expect(ControlChange::query()->count())->toBe(1)
-        ->and(ControlChange::query()->sole()->old_value)->toBeFalse()
-        ->and(ControlChange::query()->sole()->new_value)->toBeTrue();
-    expect(fn () => ControlChange::query()->sole()->delete())->toThrow(LogicException::class);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(1)
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->old_value)->toBeFalse()
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->new_value)->toBeTrue();
+    expect(fn () => ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->delete())->toThrow(LogicException::class);
 });
 
 it('keeps control change history immutable through ordinary and quiet model writes', function (): void {
     TestBootstrapHelper::ensurePluginInstalled('logistics');
     $user = SecurityHelper::authenticateWithPermissions(['view_any_logistics_module::setting', 'update_logistics_module::setting']);
     app(OperationalControl::class)->change($user, $user->default_company_id, true, 'Original history');
-    $history = ControlChange::query()->sole();
+    $history = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole();
     $originalAttributes = $history->getAttributes();
     $immutableMessage = __('logistics::settings.history_immutable');
 
@@ -179,17 +179,22 @@ it('keeps control change history immutable through ordinary and quiet model writ
     expect(fn () => $history->save())->toThrow(LogicException::class, $immutableMessage);
     expect(fn () => $history->updateQuietly(['reason' => 'Quiet update']))
         ->toThrow(LogicException::class, $immutableMessage);
-    expect(ControlChange::query()->sole()->getAttributes())->toBe($originalAttributes);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes())->toBe($originalAttributes);
 
     expect(fn () => $history->delete())
         ->toThrow(LogicException::class, $immutableMessage);
     expect(fn () => $history->deleteQuietly())
         ->toThrow(LogicException::class, $immutableMessage);
-    expect(ControlChange::query()->sole()->getAttributes())->toBe($originalAttributes);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes())->toBe($originalAttributes);
 
-    $unchangedHistory = ControlChange::query()->sole();
+    expect(fn () => DB::transaction(fn () => DB::table('logistics_control_changes')->where('id', $history->id)->update(['reason' => 'SQL tampering'])))
+        ->toThrow(QueryException::class);
+    expect(fn () => DB::transaction(fn () => DB::table('logistics_control_changes')->where('id', $history->id)->delete()))
+        ->toThrow(QueryException::class);
+
+    $unchangedHistory = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole();
     expect($unchangedHistory->save())->toBeTrue()
-        ->and(ControlChange::query()->sole()->getAttributes())->toBe($originalAttributes);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes())->toBe($originalAttributes);
 });
 
 $controlChangeCounterCases = [];
@@ -212,7 +217,7 @@ it('rejects counter writes that try to rewrite control change history', function
     TestBootstrapHelper::ensurePluginInstalled('logistics');
     $user = SecurityHelper::authenticateWithPermissions(['view_any_logistics_module::setting', 'update_logistics_module::setting']);
     app(OperationalControl::class)->change($user, $user->default_company_id, true, 'Original history');
-    $history = ControlChange::query()->sole();
+    $history = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole();
     $originalAttributes = $history->getAttributes();
     $immutableMessage = __('logistics::settings.history_immutable');
     $extra = ['reason' => 'Rewritten history'];
@@ -224,14 +229,14 @@ it('rejects counter writes that try to rewrite control change history', function
 
     expect($write)->toThrow(LogicException::class, $immutableMessage)
         ->and($history->getAttributes())->toBe($originalAttributes)
-        ->and(ControlChange::query()->sole()->getAttributes())->toBe($originalAttributes);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes())->toBe($originalAttributes);
 })->with($controlChangeCounterCases);
 
 it('rejects counters on unsaved control changes without rewriting existing history', function (string $counterMethod): void {
     TestBootstrapHelper::ensurePluginInstalled('logistics');
     $user = SecurityHelper::authenticateWithPermissions(['view_any_logistics_module::setting', 'update_logistics_module::setting']);
     app(OperationalControl::class)->change($user, $user->default_company_id, true, 'Original history');
-    $originalAttributes = ControlChange::query()->sole()->getAttributes();
+    $originalAttributes = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes();
     $unsaved = new ControlChange(['reason' => 'Unsaved history']);
     $unsavedAttributes = $unsaved->getAttributes();
     $extra = ['reason' => 'Mass history rewrite'];
@@ -241,7 +246,7 @@ it('rejects counters on unsaved control changes without rewriting existing histo
 
     expect($write)->toThrow(LogicException::class, __('logistics::settings.history_immutable'))
         ->and($unsaved->getAttributes())->toBe($unsavedAttributes)
-        ->and(ControlChange::query()->sole()->getAttributes())->toBe($originalAttributes);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes())->toBe($originalAttributes);
 })->with(['increment', 'incrementEach']);
 
 it('rejects tampering with the Company selected by the native context', function (): void {
@@ -251,7 +256,7 @@ it('rejects tampering with the Company selected by the native context', function
     Filament::setCurrentPanel(Filament::getPanel('admin'));
     Filament::bootCurrentPanel();
     expect(fn () => Livewire::test(ModuleSettings::class)->set('companyId', 999999))->toThrow(CannotUpdateLockedPropertyException::class);
-    expect(ControlChange::query()->count())->toBe(0);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(0);
 });
 
 final class FoundationHistoryFailure extends LogicException {}
@@ -275,7 +280,7 @@ it('denies a stale page and service access after the installed flag is removed',
     Plugin::query()->where('name', 'logistics')->update(['is_installed' => false]);
     Livewire::test(ModuleSettings::class)->assertForbidden();
     expect(fn () => app(OperationalControl::class)->change($user, $user->default_company_id, true, 'Not installed'))->toThrow(DomainException::class);
-    expect(ControlChange::query()->count())->toBe(0)
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(0)
         ->and(Company::query()->whereKey($user->default_company_id)->exists())->toBeTrue();
 });
 
@@ -299,7 +304,7 @@ it('advances the control revision only for actual transitions and preserves hist
     $control->change($user, $companyId, false, 'Suspend');
     $control->change($user, $companyId, true, 'Resume with fresh checks');
     expect($control->authorizeNewActivity($user, $companyId))->toBe(3)
-        ->and(ControlChange::query()->orderBy('id')->pluck('revision')->all())->toBe([1, 2, 3]);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->orderBy('id')->pluck('revision')->all())->toBe([1, 2, 3]);
     $event = 'eloquent.creating: '.ControlChange::class;
     Event::listen($event, fn () => throw new FoundationHistoryFailure('Reject history'));
     try {
@@ -308,7 +313,7 @@ it('advances the control revision only for actual transitions and preserves hist
         Event::forget($event);
     }
     expect($control->authorizeNewActivity($user, $companyId))->toBe(3)
-        ->and(ControlChange::query()->count())->toBe(3);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(3);
 });
 
 it('keeps the operational gate separate from settings permissions', function (): void {
@@ -321,7 +326,7 @@ it('keeps the operational gate separate from settings permissions', function ():
     expect($control->authorizeNewActivity($operator, $companyId))->toBe(1);
     expect(fn () => $control->read($operator, $companyId))->toThrow(AuthorizationException::class);
     expect(fn () => $control->change($operator, $companyId, false, 'Denied'))->toThrow(AuthorizationException::class);
-    expect(ControlChange::query()->count())->toBe(1);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(1);
 });
 
 it('rejects stale inactive actors and revoked Company access', function (): void {
@@ -337,7 +342,7 @@ it('rejects stale inactive actors and revoked Company access', function (): void
     DB::table('users')->where('id', $user->id)->update(['is_active' => true]);
     $user->allowedCompanies()->detach($companyId);
     expect(fn () => $control->authorizeNewActivity($user, $companyId))->toThrow(AuthorizationException::class);
-    expect(ControlChange::query()->count())->toBe(1);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(1);
 });
 
 it('rejects new activity for inactive Companies even with scope bypass', function (): void {
@@ -349,7 +354,7 @@ it('rejects new activity for inactive Companies even with scope bypass', functio
     DB::table('companies')->where('id', $companyId)->update(['is_active' => false]);
     expect(fn () => $control->authorizeNewActivity($user, $companyId))->toThrow(DomainException::class, __('logistics::settings.company_inactive'));
     expect($control->read($user, $companyId))->toBeTrue()
-        ->and(ControlChange::query()->count())->toBe(1);
+        ->and(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(1);
 });
 
 it('enforces revision constraints while retaining unknown historical revisions', function (): void {
@@ -358,11 +363,11 @@ it('enforces revision constraints while retaining unknown historical revisions',
     $companyId = $user->default_company_id;
     $control = app(OperationalControl::class);
     $control->change($user, $companyId, true, 'Start');
-    $history = ControlChange::query()->sole()->getAttributes();
+    $history = ControlChange::query()->where('company_id', auth()->user()->default_company_id)->sole()->getAttributes();
     unset($history['id']);
     $history['revision'] = null;
     DB::table('logistics_control_changes')->insert([$history, $history]);
-    expect(ControlChange::query()->whereNull('revision')->count())->toBe(2);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->whereNull('revision')->count())->toBe(2);
     foreach ([-1, 0, 1] as $revision) {
         $history['revision'] = $revision;
         expect(fn () => DB::transaction(fn () => DB::table('logistics_control_changes')->insert($history)))
@@ -382,5 +387,5 @@ it('rechecks settings permissions instead of trusting a previously loaded actor'
     $user->load('permissions', 'roles');
     $user->permissions()->detach();
     expect(fn () => $control->change($user, $companyId, false, 'Revoked'))->toThrow(AuthorizationException::class);
-    expect(ControlChange::query()->count())->toBe(1);
+    expect(ControlChange::query()->where('company_id', auth()->user()->default_company_id)->count())->toBe(1);
 });

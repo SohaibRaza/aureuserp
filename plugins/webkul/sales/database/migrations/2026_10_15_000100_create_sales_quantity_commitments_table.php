@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -21,6 +22,12 @@ return new class extends Migration
             $table->unique(['order_line_id', 'revision']);
         });
 
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('sales_quantity_commitments');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION sales_quantity_commitments_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -35,6 +42,8 @@ SQL);
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE sales_quantity_commitments IN ACCESS EXCLUSIVE MODE');
 

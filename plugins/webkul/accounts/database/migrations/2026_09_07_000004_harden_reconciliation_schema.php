@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -96,6 +97,8 @@ return new class extends Migration
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::unprepared('DROP TRIGGER IF EXISTS recon_validate_identity_trigger ON recon_bank_reconciliations');
         DB::unprepared('DROP FUNCTION IF EXISTS recon_validate_identity()');
         DB::statement('DROP INDEX IF EXISTS recon_one_active_session_per_bank');
@@ -199,6 +202,12 @@ return new class extends Migration
 
     private function backfillDeterministicIdentity(): void
     {
+        if (DB::getDriverName() === 'mysql') {
+            $this->backfillMySqlIdentity();
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             UPDATE recon_bank_reconciliations AS reconciliation
             SET company_id = COALESCE(reconciliation.company_id, journal.company_id),
@@ -319,7 +328,13 @@ return new class extends Migration
         Schema::table('recon_events', function (Blueprint $table): void {
             $table->foreign(['reconciliation_id', 'company_id'])->references(['id', 'company_id'])->on('recon_bank_reconciliations')->restrictOnDelete();
             $table->foreign('company_id')->references('id')->on('companies')->restrictOnDelete();
-            $table->foreign('actor_id')->references('id')->on('users')->nullOnDelete();
+            $actor = $table->foreign('actor_id')->references('id')->on('users');
+            if (DB::getDriverName() === 'mysql') {
+                // MySQL FK actions do not fire the append-only event trigger.
+                $actor->restrictOnDelete();
+            } else {
+                $actor->nullOnDelete();
+            }
         });
         Schema::table('recon_import_batches', function (Blueprint $table): void {
             $table->unique(['id', 'company_id'], 'recon_import_batch_company_unique');
@@ -332,6 +347,12 @@ return new class extends Migration
 
     private function addConstraints(): void
     {
+        if (DB::getDriverName() === 'mysql') {
+            $this->addMySqlConstraints();
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             ALTER TABLE recon_bank_reconciliations
             ADD CONSTRAINT recon_status_check CHECK (status IN (
@@ -474,5 +495,182 @@ return new class extends Migration
             BEFORE INSERT OR UPDATE ON recon_bank_reconciliations
             FOR EACH ROW EXECUTE FUNCTION recon_validate_identity();
         SQL);
+    }
+
+    private function backfillMySqlIdentity(): void
+    {
+        DB::statement(<<<'SQL'
+            UPDATE recon_bank_reconciliations AS reconciliation
+            JOIN accounts_journals AS journal ON journal.id = reconciliation.journal_id
+            LEFT JOIN companies AS company ON company.id = journal.company_id
+            SET reconciliation.company_id = COALESCE(reconciliation.company_id, journal.company_id),
+                reconciliation.bank_account_id = journal.bank_account_id,
+                reconciliation.liquidity_account_id = journal.default_account_id,
+                reconciliation.currency_id = COALESCE(journal.currency_id, company.currency_id)
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_bank_reconciliations AS reconciliation
+            JOIN accounts_bank_statements AS statement ON statement.id = reconciliation.statement_id
+            SET reconciliation.statement_date = statement.date
+            WHERE reconciliation.statement_date IS NULL
+        SQL);
+        DB::table('recon_bank_reconciliations')->update(['status' => 'legacy_unverified']);
+        DB::statement(<<<'SQL'
+            UPDATE recon_matches AS child
+            JOIN recon_bank_reconciliations AS parent ON parent.id = child.reconciliation_id
+            SET child.company_id = parent.company_id
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_match_lines AS child
+            JOIN recon_matches AS parent ON parent.id = child.match_id
+            SET child.company_id = parent.company_id
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_adjustments AS child
+            JOIN recon_bank_reconciliations AS parent ON parent.id = child.reconciliation_id
+            SET child.company_id = parent.company_id,
+                child.currency_id = parent.currency_id
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_events AS child
+            JOIN recon_bank_reconciliations AS parent ON parent.id = child.reconciliation_id
+            SET child.company_id = parent.company_id
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_import_batches AS batch
+            JOIN recon_bank_reconciliations AS parent ON parent.id = batch.reconciliation_id
+            SET batch.company_id = COALESCE(batch.company_id, parent.company_id),
+                batch.currency_id = COALESCE(batch.currency_id, parent.currency_id)
+        SQL);
+        DB::statement(<<<'SQL'
+            UPDATE recon_import_batches AS batch
+            JOIN accounts_journals AS journal ON journal.id = batch.journal_id
+            LEFT JOIN companies AS company ON company.id = journal.company_id
+            SET batch.company_id = COALESCE(batch.company_id, journal.company_id),
+                batch.currency_id = COALESCE(batch.currency_id, journal.currency_id, company.currency_id)
+        SQL);
+        DB::table('recon_import_batches')->update(['status' => 'legacy_unverified', 'original_filename' => DB::raw('filename')]);
+    }
+
+    private function addMySqlConstraints(): void
+    {
+        DB::statement("ALTER TABLE recon_bank_reconciliations ADD COLUMN recon_active_bank_account_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status IN ('draft', 'in_progress', 'review', 'reopen_requested', 'reopened', 'stale') THEN bank_account_id ELSE NULL END) VIRTUAL, ADD UNIQUE INDEX recon_one_active_session_per_bank (recon_active_bank_account_id)");
+
+        // MySQL rejects CHECK constraints on columns with SET NULL foreign keys.
+        // Row triggers enforce the same predicates without removing those foreign-key actions.
+        $checks = [
+            'recon_bank_reconciliations' => [
+                'recon_status_check' => <<<'SQL'
+                    NEW.status IN ( 'draft', 'in_progress', 'review', 'completed', 'reopen_requested', 'reopened', 'stale', 'cancelled', 'legacy_unverified' )
+                SQL,
+                'recon_period_order_check' => <<<'SQL'
+                    NEW.status = 'legacy_unverified' OR NEW.period_end >= NEW.period_start
+                SQL,
+                'recon_required_identity_check' => <<<'SQL'
+                    NEW.status = 'legacy_unverified' OR ( NEW.company_id IS NOT NULL AND NEW.journal_id IS NOT NULL AND NEW.bank_account_id IS NOT NULL AND NEW.liquidity_account_id IS NOT NULL AND NEW.currency_id IS NOT NULL AND NEW.period_start IS NOT NULL AND NEW.period_end IS NOT NULL )
+                SQL,
+                'recon_continuity_check' => <<<'SQL'
+                    NEW.continuity_type IS NULL OR NEW.continuity_type IN ('continuous', 'first_time', 'discontinuity')
+                SQL,
+                'recon_discontinuity_reason_check' => <<<'SQL'
+                    NEW.continuity_type <> 'discontinuity' OR NEW.continuity_reason IS NOT NULL
+                SQL,
+            ],
+            'recon_matches' => [
+                'recon_match_status_check' => <<<'SQL'
+                    NEW.status IN ('proposed', 'confirmed', 'rejected', 'reversed')
+                SQL,
+                'recon_match_type_check' => <<<'SQL'
+                    NEW.match_type IN ('auto', 'manual')
+                SQL,
+            ],
+            'recon_match_lines' => [
+                'recon_match_line_side_check' => <<<'SQL'
+                    NEW.side IN ('bank', 'ledger')
+                SQL,
+                'recon_match_line_type_check' => <<<'SQL'
+                    NEW.lineable_type IN ('statement_line', 'move_line')
+                SQL,
+            ],
+            'recon_import_batches' => [
+                'recon_import_period_order_check' => <<<'SQL'
+                    NEW.statement_start_date IS NULL OR NEW.statement_end_date IS NULL OR NEW.statement_end_date >= NEW.statement_start_date
+                SQL,
+                'recon_accepted_import_identity_check' => <<<'SQL'
+                    NEW.status <> 'accepted' OR ( NEW.company_id IS NOT NULL AND NEW.journal_id IS NOT NULL AND NEW.currency_id IS NOT NULL AND NEW.source_type IS NOT NULL AND NEW.source_identifier IS NOT NULL AND NEW.source_storage_path IS NOT NULL AND NEW.original_filename IS NOT NULL AND NEW.content_hash IS NOT NULL AND NEW.parser_version IS NOT NULL AND NEW.account_identifier IS NOT NULL AND NEW.statement_date IS NOT NULL AND NEW.imported_by IS NOT NULL AND NEW.accepted_at IS NOT NULL AND NEW.accepted_by IS NOT NULL )
+                SQL,
+            ],
+        ];
+
+        // Status has no referential actions and remains a CHECK so later migrations
+        // can extend its allowed values independently of accepted-import validation.
+        DB::statement("ALTER TABLE recon_import_batches ADD CONSTRAINT recon_import_status_check CHECK (status IS NULL OR status IN ('staged', 'validated', 'accepted', 'rejected', 'legacy_unverified'))");
+
+        foreach ($checks as $table => $predicates) {
+            $checksSql = '';
+            foreach ($predicates as $name => $predicate) {
+                if (DB::table($table)->whereRaw('NOT ('.str_replace('NEW.', '', $predicate).')')->exists()) {
+                    throw new RuntimeException("Existing reconciliation history violates {$name}; reconcile it before continuing.");
+                }
+
+                $checksSql .= "IF NOT ({$predicate}) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '{$name}'; END IF; ";
+            }
+
+            foreach (['INSERT', 'UPDATE'] as $event) {
+                $identitySql = $table === 'recon_bank_reconciliations' ? $this->mySqlIdentitySql($event) : '';
+                DB::unprepared("CREATE TRIGGER {$table}_validate_".strtolower($event)." BEFORE {$event} ON {$table} FOR EACH ROW BEGIN {$checksSql} {$identitySql} END");
+            }
+        }
+
+        // Referential SET NULL actions bypass MySQL triggers. Preserve the accepted-import
+        // CHECK guarantee while allowing deletion of actors used only by unaccepted imports.
+        DB::unprepared(<<<'SQL'
+            CREATE TRIGGER recon_import_accepted_actor_delete BEFORE DELETE ON users FOR EACH ROW
+            BEGIN
+                DECLARE accepted_import_id BIGINT DEFAULT NULL;
+                SELECT id INTO accepted_import_id FROM recon_import_batches
+                WHERE accepted_by = OLD.id AND status = 'accepted' LIMIT 1 FOR SHARE;
+                IF accepted_import_id IS NOT NULL THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Accepted import evidence requires its recorded approver';
+                END IF;
+            END
+        SQL);
+    }
+
+    private function mySqlIdentitySql(string $event): string
+    {
+        $legacyGuard = $event === 'UPDATE'
+            ? "IF OLD.status = 'legacy_unverified' AND NEW.status <> 'legacy_unverified' AND NEW.legacy_verified_at IS NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Legacy reconciliation must be verified before lifecycle transition'; END IF;"
+            : '';
+
+        return <<<'SQL'
+            IF NEW.status <> 'legacy_unverified' AND (
+                SELECT journal.type NOT IN ('bank', 'credit') FROM accounts_journals AS journal WHERE journal.id = NEW.journal_id
+            ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Bank reconciliation requires a bank or credit journal'; END IF;
+            IF NEW.company_id IS NOT NULL AND NOT (NEW.company_id <=> (
+                SELECT company_id FROM accounts_journals WHERE id = NEW.journal_id
+            )) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Reconciliation company does not match journal company'; END IF;
+            IF NEW.bank_account_id IS NOT NULL AND NOT (NEW.bank_account_id <=> (
+                SELECT bank_account_id FROM accounts_journals WHERE id = NEW.journal_id
+            )) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Reconciliation bank account does not match journal bank account'; END IF;
+            IF NEW.liquidity_account_id IS NOT NULL AND NOT (NEW.liquidity_account_id <=> (
+                SELECT default_account_id FROM accounts_journals WHERE id = NEW.journal_id
+            )) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Reconciliation liquidity account does not match journal default account'; END IF;
+            IF NEW.currency_id IS NOT NULL AND NOT (NEW.currency_id <=> (
+                SELECT COALESCE(journal.currency_id, company.currency_id) FROM accounts_journals AS journal
+                LEFT JOIN companies AS company ON company.id = journal.company_id WHERE journal.id = NEW.journal_id
+            )) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Reconciliation currency does not match journal or company currency'; END IF;
+            IF NEW.statement_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM accounts_bank_statements WHERE id = NEW.statement_id
+                AND company_id <=> NEW.company_id AND journal_id <=> NEW.journal_id
+            ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Statement does not belong to reconciliation company and journal'; END IF;
+            IF NEW.status <> 'cancelled' AND NEW.bank_account_id IS NOT NULL
+                AND NEW.period_start IS NOT NULL AND NEW.period_end IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM recon_bank_reconciliations AS existing
+                    WHERE existing.id <> COALESCE(NEW.id, 0) AND existing.bank_account_id = NEW.bank_account_id
+                    AND existing.status <> 'cancelled' AND existing.period_start IS NOT NULL AND existing.period_end IS NOT NULL
+                    AND existing.period_start <= NEW.period_end AND existing.period_end >= NEW.period_start
+                ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Reconciliation period overlaps an existing session for this bank account'; END IF;
+        SQL.$legacyGuard;
     }
 };

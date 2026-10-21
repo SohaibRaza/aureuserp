@@ -2,7 +2,9 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -100,11 +102,23 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('recon_import_batches');
-        Schema::dropIfExists('recon_events');
-        Schema::dropIfExists('recon_adjustments');
-        Schema::dropIfExists('recon_match_lines');
-        Schema::dropIfExists('recon_matches');
-        Schema::dropIfExists('recon_bank_reconciliations');
+        ImmutableHistory::refuseMySqlRollback();
+
+        DB::transaction(function (): void {
+            $tables = ['recon_import_batches', 'recon_events', 'recon_adjustments', 'recon_match_lines', 'recon_matches', 'recon_bank_reconciliations'];
+            DB::statement('LOCK TABLE '.implode(', ', $tables).' IN ACCESS EXCLUSIVE MODE');
+            foreach ($tables as $table) {
+                if (DB::table($table)->exists()) {
+                    throw new RuntimeException('Saved reconciliation history requires forward recovery; rollback cannot discard that history.');
+                }
+            }
+
+            Schema::dropIfExists('recon_import_batches');
+            Schema::dropIfExists('recon_events');
+            Schema::dropIfExists('recon_adjustments');
+            Schema::dropIfExists('recon_match_lines');
+            Schema::dropIfExists('recon_matches');
+            Schema::dropIfExists('recon_bank_reconciliations');
+        });
     }
 };

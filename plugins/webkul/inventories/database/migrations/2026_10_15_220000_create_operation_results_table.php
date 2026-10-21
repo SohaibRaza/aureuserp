@@ -4,6 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Webkul\Support\Database\ImmutableHistory;
 
 return new class extends Migration
 {
@@ -23,6 +24,12 @@ return new class extends Migration
 
         DB::statement("ALTER TABLE inventories_operation_results ADD CONSTRAINT inventories_operation_results_action_check CHECK (action IN ('complete', 'cancel')), ADD CONSTRAINT inventories_operation_results_version_check CHECK (version > 0)");
 
+        if (DB::getDriverName() === 'mysql') {
+            ImmutableHistory::protect('inventories_operation_results');
+
+            return;
+        }
+
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION inventories_operation_results_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -36,6 +43,8 @@ SQL);
 
     public function down(): void
     {
+        ImmutableHistory::refuseMySqlRollback();
+
         DB::transaction(function (): void {
             DB::statement('LOCK TABLE inventories_operation_results IN ACCESS EXCLUSIVE MODE');
 
