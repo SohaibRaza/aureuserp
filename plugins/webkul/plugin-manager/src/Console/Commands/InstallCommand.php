@@ -9,12 +9,19 @@ use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Symfony\Component\Process\Process;
 use Throwable;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 
 class InstallCommand extends Command
 {
+    /** @var array<string, true> */
+    private static array $installingPackages = [];
+
+    /** @var array<string, true> */
+    private static array $completedPackages = [];
+
     protected Package $package;
 
     public ?Closure $startWith = null;
@@ -52,7 +59,42 @@ class InstallCommand extends Command
         parent::__construct();
     }
 
-    public function handle()
+    public function handle(): int
+    {
+        $name = $this->package->shortName();
+        $isRoot = self::$installingPackages === [];
+        if ($isRoot) {
+            self::$completedPackages = [];
+        }
+        if (isset(self::$completedPackages[$name])) {
+            return self::SUCCESS;
+        }
+        if (isset(self::$installingPackages[$name])) {
+            throw new RuntimeException("Circular plugin dependency while installing [{$name}].");
+        }
+
+        self::$installingPackages[$name] = true;
+        try {
+            $result = $this->installPackage();
+            if ($result !== self::SUCCESS) {
+                return $result;
+            }
+            self::$completedPackages[$name] = true;
+            if ($isRoot) {
+                $this->regenerateAdminPanelPermissions();
+                $this->refreshApplicationCaches();
+            }
+
+            return self::SUCCESS;
+        } finally {
+            unset(self::$installingPackages[$name]);
+            if ($isRoot) {
+                self::$completedPackages = [];
+            }
+        }
+    }
+
+    protected function installPackage(): int
     {
         if ($this->startWith) {
             ($this->startWith)($this);
@@ -75,7 +117,7 @@ class InstallCommand extends Command
 
                     $this->newLine();
 
-                    $this->call($dependency.':install');
+                    $this->installDependency($dependency);
                 }
 
                 $this->newLine();
@@ -88,11 +130,11 @@ class InstallCommand extends Command
 
                 $this->newLine();
 
-                return $this->handle();
+                return $this->installPackage();
             } else {
                 $this->error('Please install the dependencies first.');
 
-                return;
+                return self::FAILURE;
             }
         } elseif ($this->installDependencies) {
             $this->info("🚀 Installing <comment>{$this->package->shortName()}</comment> dependencies...");
@@ -104,7 +146,7 @@ class InstallCommand extends Command
 
                 $this->newLine();
 
-                $this->call($dependency.':install');
+                $this->installDependency($dependency);
             }
 
             $this->newLine();
@@ -163,13 +205,22 @@ class InstallCommand extends Command
             ($this->endWith)($this);
         }
 
-        $this->regenerateAdminPanelPermissions();
-
-        $this->info('⚙️ Refreshing application caches so the plugin navigation is reflected...');
-
-        Package::refreshPluginCaches();
-
         $this->info("🎉 Package <comment>{$this->package->shortName()}</comment> has been installed!");
+
+        return self::SUCCESS;
+    }
+
+    private function installDependency(string $dependency): void
+    {
+        if ($this->call($dependency.':install') !== self::SUCCESS) {
+            throw new RuntimeException("Unable to install required dependency [{$dependency}].");
+        }
+    }
+
+    protected function refreshApplicationCaches(): void
+    {
+        $this->info('⚙️ Refreshing application caches so the plugin navigation is reflected...');
+        Package::refreshPluginCaches();
     }
 
     public function publish(string ...$tag): self
@@ -260,9 +311,11 @@ class InstallCommand extends Command
         if (! $migrationsToRun->isEmpty()) {
             $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> database migrations...");
 
-            $this->call('migrate', [
+            if ($this->call('migrate', [
                 '--path' => $migrationsToRun->toArray(),
-            ]);
+            ]) !== self::SUCCESS) {
+                throw new RuntimeException("Unable to migrate plugin [{$this->package->shortName()}].");
+            }
 
             $this->info("✅ Migrations <comment>{$this->package->shortName()}</comment> completed successfully.");
 
@@ -286,10 +339,12 @@ class InstallCommand extends Command
         if (! $settingsToRun->isEmpty()) {
             $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> settings database migrations...");
 
-            $this->call('migrate', [
+            if ($this->call('migrate', [
                 '--path'  => $settingsToRun->toArray(),
                 '--force' => true,
-            ]);
+            ]) !== self::SUCCESS) {
+                throw new RuntimeException("Unable to migrate settings for plugin [{$this->package->shortName()}].");
+            }
 
             $this->callSilently('settings:clear-cache');
 
@@ -330,9 +385,11 @@ class InstallCommand extends Command
         $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> database seeders...");
 
         foreach ($this->package->seederClasses as $seeder) {
-            $this->call('db:seed', [
+            if ($this->call('db:seed', [
                 '--class' => $seeder,
-            ]);
+            ]) !== self::SUCCESS) {
+                throw new RuntimeException("Unable to seed plugin [{$this->package->shortName()}].");
+            }
         }
 
         Package::syncPostgresSequences();
@@ -433,23 +490,10 @@ class InstallCommand extends Command
         try {
             $phpPath = $this->getPhpExecutablePath();
 
-            $php = escapeshellarg($phpPath);
-
-            $artisan = escapeshellarg(base_path('artisan'));
-
-            $cmd = $this->buildTimeoutCommand(60, "$php $artisan shield:generate --all --option=permissions --panel=admin 2>&1");
-
-            exec($cmd, $output, $exitCode);
-
-            if ($exitCode === 124) {
-                throw new RuntimeException('Permission generation timed out after 60 seconds.');
-            }
-
-            if ($exitCode !== 0) {
-                $errorOutput = implode(PHP_EOL, array_slice($output, -5));
-
-                throw new RuntimeException("Failed to generate admin panel permissions. Error: {$errorOutput}");
-            }
+            (new Process([
+                $phpPath, base_path('artisan'), 'shield:generate', '--all',
+                '--option=permissions', '--panel=admin', '--no-interaction',
+            ], base_path()))->setTimeout(60)->mustRun();
 
             $role = Role::first();
 
@@ -472,10 +516,5 @@ class InstallCommand extends Command
     protected function getPhpExecutablePath(): string
     {
         return Package::phpBinaryPath();
-    }
-
-    protected function buildTimeoutCommand(int $seconds, string $command): string
-    {
-        return Package::buildTimeoutCommand($seconds, $command);
     }
 }

@@ -57,12 +57,16 @@ class TestBootstrapHelper
             $isInstalled = $isMarkedInstalled && (! $table || Schema::hasTable($table));
 
             if (! $isInstalled) {
-                Artisan::call("{$pluginName}:install", ['--no-interaction' => true]);
+                static::installPlugin($pluginName);
             }
 
             foreach (static::$pluginTables as $candidate => $candidateTable) {
                 if (isset(static::$installedPlugins[$candidate]) || ! Schema::hasTable($candidateTable)) {
                     continue;
+                }
+
+                if (! DB::table('plugins')->where('name', $candidate)->where('is_installed', true)->exists()) {
+                    static::installPlugin($candidate);
                 }
 
                 static::ensurePluginSeeded($candidate);
@@ -84,6 +88,13 @@ class TestBootstrapHelper
         static::bootInstalledPluginProviders();
 
         static::restartTestTransaction();
+    }
+
+    private static function installPlugin(string $pluginName): void
+    {
+        if (Artisan::call("{$pluginName}:install", ['--no-interaction' => true]) !== 0) {
+            throw new RuntimeException("Unable to install required test plugin [{$pluginName}].");
+        }
     }
 
     private static function onCommittedConnection(callable $callback): void
