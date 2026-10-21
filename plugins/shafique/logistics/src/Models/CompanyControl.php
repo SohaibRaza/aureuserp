@@ -13,12 +13,14 @@ class CompanyControl extends Model
 
     protected $fillable = [
         'company_id',
+        'revision',
         'accept_new_activity',
     ];
 
     protected function casts(): array
     {
         return [
+            'revision'            => 'integer',
             'accept_new_activity' => 'boolean',
         ];
     }

@@ -22,6 +22,13 @@ class Role extends BaseRole
         return Str::ucfirst($value);
     }
 
+    public function forgetCachedPermissions(): void
+    {
+        parent::forgetCachedPermissions();
+
+        app(\Webkul\Security\PermissionRegistrar::class)->forgetCachedPermissions();
+    }
+
     protected static function booted(): void
     {
         static::updating(function (self $role): void {

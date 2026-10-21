@@ -79,9 +79,67 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 - Add Inventory constraints/indexes only after Q3 identity decision and clean preflight. The local six-column balance-identity implementation uses PostgreSQL `UNIQUE NULLS NOT DISTINCT` and therefore requires PostgreSQL 15 or newer; verify the deployment version and duplicates before applying it. See the [integrity evidence and migration conditions](../P0-EXECUTION-REPORT-2026-09-24.md#continued-inventory-and-accounts-integrity-work--2026-09-24).
 - Deploy compatible owner services before activating constraints that old writers cannot satisfy.
 
+#### Read-only target duplicate preflight
+
+No deployment target exists in the [current development-only project](../../BRANCHING-AND-RELEASES.md#current-project-lifecycle-2026-10-05). The deployment-target preflight is deferred until one is established; it is not a current development blocker. Continue isolated migration and concurrency verification. Before migrating existing development data, run the same preflight against that identified development database and preserve its records.
+
+For a future deployment, run the following through the approved connection to the intended deployment database. Record its environment and exact PostgreSQL version. A result from a disposable test database does not clear that future deployment gate. The transaction reads existing records and rolls back without applying migrations or changing balances.
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '30s';
+SET LOCAL lock_timeout = '5s';
+
+SELECT current_database() AS database_name,
+       current_setting('server_version') AS postgres_version,
+       current_setting('server_version_num')::integer AS postgres_version_num;
+
+WITH duplicate_identities AS (
+    SELECT company_id, product_id, location_id, lot_id, package_id, partner_id,
+           COUNT(*) AS balance_rows
+    FROM inventories_product_quantities
+    GROUP BY company_id, product_id, location_id, lot_id, package_id, partner_id
+    HAVING COUNT(*) > 1
+)
+SELECT COUNT(*) AS duplicate_identity_groups,
+       COALESCE(SUM(balance_rows), 0) AS rows_in_duplicate_groups,
+       COALESCE(SUM(balance_rows - 1), 0) AS excess_balance_rows
+FROM duplicate_identities;
+
+SELECT conname, pg_get_constraintdef(oid) AS definition, convalidated
+FROM pg_constraint
+WHERE conrelid = 'inventories_product_quantities'::regclass
+  AND conname = 'inventories_product_quantities_identity_unique';
+
+ROLLBACK;
+```
+
+The version must be at least PostgreSQL 15 and all duplicate counts must be zero. Query errors, timeouts or missing access leave the gate open. An existing constraint must match the approved six-field definition with `NULLS NOT DISTINCT`; its existence alone does not prove writer compatibility. If duplicates exist, stop migration activation and request an authorized detailed reconciliation report. This summary intentionally contains no customer, owner or balance identifiers. Even a clean report requires a controlled migration window because other writers can change the data before migration execution; the registered migration repeats the duplicate check while holding its table lock.
+
+#### Inventory operation result specification — 2026-10-15
+
+Inventory owns `inventories_operation_results` and `Webkul\Inventory\Models\OperationResult`. Each transfer operation has at most one recorded completion or cancellation result. A separate table prevents native return and backorder replication from copying a source operation's execution result. The registered additive migration is `2026_10_15_220000_create_operation_results_table`. The coordinator reviewed this schema during isolated implementation; application activation and final acceptance are still pending. It implements the operation-root portion of IC3 and DM6, supporting U4, AE4 and AE6-AE8. It does not establish a command receipt for raw movements without a transfer root or authorize a Logistics load.
+
+| Column | PostgreSQL type and nullability | Meaning and constraints |
+| --- | --- | --- |
+| `id` | Generated `bigint`, not null | Primary key. |
+| `operation_id` | `bigint`, not null | Unique foreign key to `inventories_operations.id`; deletion is restricted. |
+| `company_id` | `bigint`, not null | Foreign key to `companies.id`; deletion is restricted. |
+| `actor_id` | `bigint`, not null | Authenticated executor; foreign key to `users.id`; physical deletion is restricted. Use the native inactive or soft-deleted user lifecycle to retain historical identity. |
+| `action` | `varchar(255)`, not null | Check constraint permits `complete` and `cancel`. |
+| `version` | `smallint`, not null, default 1 | Positive result format version, enforced by a check constraint. |
+| `intent` | `jsonb`, not null | Original command options and the saved operation, movement and line facts before execution. Native saved quantities and explicitly supplied Barcode counts remain distinct inputs. |
+| `result` | `jsonb`, not null | Canonical operation outcome and closing time, executed movements and lines, unit conversion data, lot and package IDs, related backorders and the exact newly created backorder IDs. |
+| `created_at` | Timestamp without time zone, precision 0, not null | Owner-supplied recording time, following the native Inventory timestamp convention. There is no `updated_at`. |
+
+PostgreSQL triggers reject updates and deletions; model checks provide a normal application error for those attempts. The owner locks the affected products, operation and movements, checks current executor access, and either returns the matching saved result or performs the mutation. Saving the result and dispatching the terminal event share the stock transaction. Failure of either, or of an enclosing caller transaction, rolls back the whole command. The saved result must exist before a matching reentrant event-listener call is accepted. A conflicting retry never changes the original result.
+
+There is no legacy backfill. An already terminal operation without a verified saved result requires review; code must not reconstruct execution proof from current rows. Add the table before activating compatible writers. Older writers cannot maintain or honor this result contract and must not run after activation. Preserve a populated result table during rollback and use forward correction; the reverse migration is suitable only for an isolated empty schema. Restrictive foreign keys prevent deletion of the native operation, Company or executor from silently removing the recorded result.
+
 ### M2B. Accounts owner integrity
 
-- Add Accounts instruction/result/recipient safeguards after Q5 approval.
+- The native payment-registration result and replay fields can be added before Q5 because they do not define freight charges, advances or payment recipients. First review historical payment registers, rehearse the PostgreSQL migration and verify that the compatible Accounts service is deployed.
+- Add advance, recipient and freight-settlement fields only after the applicable Q5 accounting and approval rules are agreed.
 - Deploy compatible Accounts services before activating constraints that old writers cannot satisfy.
 
 ### M2C. Sales commitment history
@@ -89,10 +147,43 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 - Add Sales snapshot storage during P3 after Q1 approval.
 - Backfill only facts supported by preserved source evidence; otherwise record legacy meaning as unknown.
 
+#### Sales quantity history specification — 2026-10-15
+
+The Sales-owned table is `sales_quantity_commitments`, represented by `Webkul\Sale\Models\QuantityCommitment`. It records the accepted meaning of a confirmed source line. The registered additive migration is `2026_10_15_000100_create_sales_quantity_commitments_table`. The coordinator reviewed the schema below after isolated implementation; it has not been applied to application data. Review corrections and integrated acceptance remain required before activation. This specification implements IC1 and DM3 under the scoped Q1 approval and supports R11-R14 and AE3.
+
+| Column | PostgreSQL type and nullability | Meaning and constraints |
+| --- | --- | --- |
+| `id` | Generated `bigint`, not null | Primary key. |
+| `order_id` | `bigint`, not null | Foreign key to `sales_orders.id`; deletion is restricted. |
+| `order_line_id` | `bigint`, not null | Foreign key to `sales_order_lines.id`; deletion is restricted. |
+| `revision` | `integer`, not null | The owner assigns the next positive revision under source locks. Unique with `order_line_id`. |
+| `company_id` | `bigint`, not null | Exact Company at acceptance. No cascading Company foreign key; the historical identifier is retained. The owner validates it against the source. |
+| `created_by` | `bigint`, nullable | Recording actor ID. No user-deletion cascade. |
+| `data` | `jsonb`, not null | Product identity and name; commercial and stock quantities; both unit IDs, names, categories, factors and rounding; conversion; packaging identity, count and units per pack; warehouse and route; customer, shipping party and saved address. |
+| `created_at` | Timestamp with time zone, not null | Acceptance time supplied by the owner. There is no `updated_at`. |
+
+No business field has a fabricated legacy default. Quantities must be finite and representable at the saved unit precision and the existing four-decimal source-column precision; an unsupported value is rejected rather than silently rounded into a different requirement. Packaging count is derived from stock quantity and the saved pack conversion. PostgreSQL triggers reject every update or deletion of a persisted revision. Source and revision uniqueness also supplies the line-history lookup index.
+
+Confirmation and confirmed source changes lock the order and affected lines, then the product, unit rows in ID order and selected packaging. Snapshot insertion, derived source quantities and native procurement participate in the same connection transaction. A late failure rolls them all back. Independent Inventory commands can acquire product locks first, so a cross-owner deadlock may require a complete fresh retry; the design does not claim to eliminate those deadlocks.
+
+Existing confirmed rows without a snapshot remain unverified. Ordinary quantity or header edits must not create initial history for those existing lines from current master data; they require a separate provenance-backed verification process. Newly added confirmed lines may establish explicit current facts. There is no historical backfill, dual write or compatibility history to retire. Expand by adding the table before enabling the new source writers; do not run older confirmed-line writers after activation because they cannot maintain revisions. A code rollback must disable affected confirmation and source-edit commands while preserving history. The migration's `down()` is for isolated empty test schemas; it is not an approved way to remove accepted business records. Recovery uses a corrected forward migration and reconciled source revisions.
+
 ### M3A. Control and evidence foundation schema
 
 - Add command/approval, evidence and operational-control records during P2.
 - Preserve current existing foundation rows after reconciliation; do not create a competing settings/control model.
+
+#### Suspension cutoff implementation boundary — 2026-10-16
+
+The approved Q9 rule requires a transaction boundary, not a preliminary check of the settings page. An affected command must lock its owning `companies` row before reading the current Logistics control, and retain that lock until its business changes commit. Suspending or resuming activity must take the same lock first. If an already authorized command commits first, suspension takes effect after that command; if suspension commits first, the command must reject without effects. A check followed by an unlocked write does not satisfy this requirement.
+
+Extend `logistics_company_controls` with a nonnegative `bigint` column named `revision` for the control revision. Existing rows start at revision zero, which identifies the state at activation of this mechanism; it does not invent revisions for historical changes. Add a nullable `bigint` column named `revision` to `logistics_control_changes`; historical rows retain null, while each new transition records its positive revision, unique within its Company. Increment the revision once for each actual active-to-suspended or suspended-to-active transition. Repeating the current setting must not advance it. Future approvals must record this revision and compare it under the same Company lock when consumed. Both suspension and resumption invalidate earlier unused approvals; resumption cannot revive an old load verification or stock-release approval.
+
+The current actor's active status, permissions and Company access must be checked within the protected command boundary. The owning command starts the transaction and calls `OperationalControl::authorizeNewActivity()` before locking its other business records. That method requires an existing transaction, locks the Company row, rejects suspended activity and returns the current control revision. It requires an active Company as well as current authentication and Company access, including when the actor can bypass ordinary Company scope. It does not grant permission to plan, verify or release goods. Each owning command must enforce its own operational action policy. Dispatch staff must not need permission to view or change module settings merely to pass this operational gate; reading or changing the configuration retains its separate settings permissions. The command retains the same connection and transaction through its writes and any approval consumption. It must not perform irreversible external effects before commit. Source revision checks and business validations remain the responsibility of the owning command service. No general callback or workflow framework is needed for this boundary.
+
+Company-first ordering applies to Logistics-owned commands. A native Inventory precondition may run after Inventory has already locked Products and movements. U9 and U11 must qualify that entry path separately: retain the enclosing stock transaction, serialize the control check with suspension, and prove that competing cross-owner lock acquisition either succeeds or rolls the entire losing command back. Do not release stock locks, check suspension outside the transaction, or claim a universal deadlock-free lock order. Any required whole-command retry must use fresh state and the owner's saved-result lookup; a partial stock step must never be retried independently.
+
+Incident and evidence capture, and explicitly authorized corrections for goods already issued, use their own permission and state checks. They must not be routed through the new-activity gate. This bounded cutoff mechanism can be implemented before evidence acceptance and approval storage; doing so does not complete U8 or satisfy U7, and does not authorize planning, loading or release consumers until their own dependencies pass. Apply the additive migration to existing development data only after a separate preflight; isolated PostgreSQL tests may install it directly.
 
 ### M3B. Planning and loading schema
 
@@ -132,7 +223,7 @@ Each phase uses an explicit expand, verify, activate and contract checkpoint. En
 | --- | --- | --- |
 | M1A nonproduction characterization | P0 | Reproducible reports, sanitized fixtures and explained findings. |
 | M2A Inventory integrity | P1A | Q3 approval, duplicate preflight, caller map and PostgreSQL concurrency proof. |
-| M2B Accounts integrity | P1B | Q5 approval, corrected reconciliation fixtures and native effect/reversal proof. |
+| M2B Accounts integrity | P1B | Native registration-result and replay fields require historical-register review, corrected reconciliation fixtures, compatible service code and PostgreSQL verification. Advance, recipient and freight-settlement changes also require Q5 approval and their applicable effect/reversal proof. |
 | M3A controls and evidence | P2 | Q2/Q7/Q9 decisions, evidence failure tests and suspension race proof. |
 | M2C plus M3B planning/loading | P3 | Q1/Q4/Q6 decisions, physical schema specification and source-lineage proof. |
 | M4 execution/reconciliation | P4 | P3 acceptance, Q10 decision, Inventory transaction and correction proof. |
@@ -155,3 +246,14 @@ Each phase uses an explicit expand, verify, activate and contract checkpoint. En
 - Native and Logistics totals reconcile by company and source identity.
 - PostgreSQL enforces the approved identity and aggregate behavior.
 - Code rollback cannot erase evidence history or approved-disposal tombstones, physical history, or native financial and stock facts.
+
+
+### Reservation snapshots and pre-issue recovery history
+
+Each new load item stores a `native_line_snapshot` containing the original reservation-line ID, move and operation IDs, exact Company and product, unit, source and destination locations, lot identity, package identities, stock owner and reserved quantity. The physical count remains a separate stock quantity linked to the saved Sales commitment. The load content hash includes the saved native details as well as the counted item identities and quantities. Historical load hashes are not recalculated.
+
+An Inventory reservation line is temporary and may be deleted during native cancellation or reservation release. Its original ID in Logistics history is therefore an audit reference, not a foreign key that prevents the Inventory owner from deleting an otherwise releasable reservation. The native movement and saved commercial commitment retain their durable references. Current-load and issued-batch guards still prevent unsafe native mutation.
+
+Append recovery events for removing an unused selection, confirming complete unloading of an unissued load, and cancelling an unissued trip. Store Company, trip, affected allocation or load where relevant, actor, reason, prior and resulting trip revisions, and recording time. Database triggers prevent changing or deleting these events. Clearing the current load pointer never deletes the original load or verification record. Any accepted native-line snapshot, recovery event or deleted native reservation row requires forward recovery. Schema rollback must not discard the historical facts used by a saved load hash, invent replacement reservation rows or delete recovery history.
+
+The additive migration leaves pre-existing load snapshots null rather than manufacturing historical facts. Those legacy references remain protected until explicitly reviewed. Apply the migration to existing development data only after checking the target, migration ledger, table and column collisions, and any historical load items. No stock balances, orders, payments, staff assignments or activity controls are changed by this migration.

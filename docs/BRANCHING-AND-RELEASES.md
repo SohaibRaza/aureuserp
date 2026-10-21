@@ -7,6 +7,12 @@ This repository has two Git remotes:
 | `upstream` | `aureuserp/aureuserp` | Original AureusERP project. Fetch its changes; do not push Shafique-specific work here. |
 | `origin` | `SohaibRaza/aureuserp` | Maintained fork. Its `master` branch mirrors upstream, while `production` contains the fork's custom work. |
 
+## Current project lifecycle (2026-10-05)
+
+The owner confirmed that the project is entirely in development. No deployment is configured and no production environment exists. The `production` branch is the custom development code line. A push to this branch is not a deployment.
+
+Use isolated PostgreSQL databases to verify migrations, transaction integrity and concurrency during development. Future deployment-target checks, migration rollout and live-pilot acceptance apply when those environments and operations are established; their absence does not block development or code review. Before applying a migration to existing development data, inspect that actual database and preserve its records. Keep business-policy approvals and technical dependencies attached to the behavior they govern.
+
 ## Branch responsibilities
 
 - `origin/master` is the clean integration point for upstream AureusERP. Keep it free of Shafique-specific commits. Update it from `upstream/master` only after checking the upstream changes and the fork's current state.

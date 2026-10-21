@@ -93,7 +93,7 @@ Implementation proceeds in small dependency-ordered increments, prioritizing ded
 
 ## Implementation order
 
-The [stock-readiness target proposal](03-WORKFLOWS-AND-LIFECYCLES.md#stock-readiness-before-loading-proposed-target-for-review) extends F1 with explicit demand, available-stock, future-production and deadline rules. Review its five choices in Q1/Q2/Q3/Q4/Q6 before implementing affected behavior. The [four-mode tabletop review](../P0-TRANSPORT-MODE-TABLETOP-2026-09-24.md) records design scenarios and missing operational evidence; it is not operational signoff.
+The [stock-readiness workflow](03-WORKFLOWS-AND-LIFECYCLES.md#stock-readiness-before-loading-proposed-target-for-review) extends F1 with explicit demand, available-stock, future-production and deadline rules. The project owner approved [parts A-D of the quantity, loading and first-journey rules](12-OPEN-DECISIONS.md#quantity-loading-and-first-journey-decision-proposal--2026-10-15) on 2026-10-15 and confirmed that SF1 and SF2 share one legal Company. Apply that approval to the stated Q1/Q2/Q3/Q4/Q6 scope; do not ask for it again or treat unconfigured product and location IDs as a reversal of the approved rules. Other decisions and technical dependencies remain in force. The [four-mode tabletop review](../P0-TRANSPORT-MODE-TABLETOP-2026-09-24.md) records design scenarios and missing operational evidence; it is not operational signoff.
 
 ```mermaid
 flowchart TB

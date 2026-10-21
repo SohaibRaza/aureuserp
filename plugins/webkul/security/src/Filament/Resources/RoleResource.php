@@ -145,6 +145,7 @@ class RoleResource extends RolesRoleResource
         return static::$allFormPermissions = $resourcePermissions
             ->merge(array_keys(static::getPageOptions()))
             ->merge(array_keys(static::getWidgetOptions()))
+            ->merge(Utils::isCustomPermissionTabEnabled() ? array_keys(FilamentShield::getCustomPermissions() ?? []) : [])
             ->unique()
             ->values();
     }

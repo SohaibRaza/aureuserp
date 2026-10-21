@@ -11,6 +11,8 @@ execution: code
 
 The phases below are the authoritative implementation and approval sequence. Units U1-U20 are bounded implementation slices governed by their complete parent-phase contract. A phase cannot exit on documentation or mocked-model results alone. Work may overlap only where dependencies and decision gates permit it. The owner has authorized bounded Inventory and Accounts integrity repairs alongside remaining P0 evidence work. Such a repair needs an isolated baseline, a reproduced defect or failing test, and no unresolved business-policy dependency. It cannot activate dependent Logistics execution features or waive PostgreSQL acceptance.
 
+The project is [development-only, with no deployment or production environment](../../BRANCHING-AND-RELEASES.md#current-project-lifecycle-2026-10-05). Verify current work on isolated PostgreSQL databases. A deployment-target duplicate report, deployment rehearsal or live-pilot acceptance is a gate for that future activity, not a prerequisite to continue development or review code. Business-policy decisions and implementation dependencies still govern the affected behavior; preflight any existing development data before migrating it.
+
 ```mermaid
 flowchart TB
   P0[P0 Baseline and governance] --> P1A[P1A Inventory integrity]
@@ -67,8 +69,8 @@ Files marked new are proposed paths; implementation must follow current sibling 
 | --- | --- | --- | --- |
 | U1 | `scripts/run_logistics_phase2a_tests.sh`, `config/testing.php`, `phpunit.xml`, `plugins/webkul/support/tests/Helpers/TestBootstrapHelper.php` | `plugins/webkul/support/tests/Feature/Workflows/TestBootstrapPluginPathTest.php` | None |
 | U2 | `plugins/shafique/logistics/src/Services/OperationalControl.php`, `plugins/shafique/logistics/src/Listeners/PreventRemoval.php`, plugin providers | `plugins/shafique/logistics/tests/Feature/FoundationTest.php`, `plugins/shafique/logistics/tests/Feature/RemovalTest.php` | U1 |
-| U3 | `plugins/webkul/inventories/src/Models/ProductQuantity.php`, `plugins/webkul/inventories/src/Services/MoveReserver.php`, owner migration | `plugins/webkul/inventories/tests/Feature/Workflows/ReservationConcurrencyTest.php`, `plugins/webkul/inventories/tests/Feature/Workflows/QuantIdentityTest.php` (new) | U1, Q3 |
-| U4 | `plugins/webkul/inventories/src/Services/TransferWorkflow.php`, move services, `plugins/webkul/inventories/src/InventoryManager.php`, native callers/hooks | `plugins/webkul/inventories/tests/Feature/Workflows/TransferIntegrityTest.php`, `plugins/webkul/inventories/tests/Feature/Workflows/TransferCompletionConcurrencyTest.php` (new), caller regressions | U3, Q3 |
+| U3 | `plugins/webkul/inventories/src/Models/ProductQuantity.php`, `plugins/webkul/inventories/src/Services/MoveReserver.php`, owner migration | Existing Inventory workflow tests `StockDeltaAtomicityTest.php`, `StockIdentityTest.php` and `QuantityTest.php`; extend these for additional identity and reservation cases rather than duplicate their coverage | U1, Q3 |
+| U4 | `plugins/webkul/inventories/src/Services/TransferWorkflow.php`, move services, `plugins/webkul/inventories/src/InventoryManager.php`, native callers/hooks | `plugins/webkul/inventories/tests/Feature/Workflows/TransferIntegrityTest.php`, `plugins/webkul/inventories/tests/Feature/Workflows/StockMutationPreconditionTest.php`, caller regressions; extend these for remaining terminal-result replay acceptance | U3, Q3 |
 | U5 | Inventory return request/controller and correction service (new if needed) | `plugins/webkul/inventories/tests/Feature/API/V1/DeliveryTest.php`, `plugins/webkul/inventories/tests/Feature/Workflows/ReturnConcurrencyTest.php`, `plugins/webkul/inventories/tests/Feature/Workflows/OnsiteIssueCorrectionTest.php` (new) | U4, Q3/Q4 |
 | U6 | `plugins/webkul/sales/src/Services/OrderWorkflow.php`, `plugins/webkul/sales/src/Services/ProcurementRequester.php`, Sales snapshot model/migration | `plugins/webkul/sales/tests/Feature/Workflows/QuantityCommitmentTest.php`, `plugins/shafique/logistics/tests/Feature/PackingSnapshotTest.php` (new) | U1, Q1 |
 | U7 | `plugins/shafique/logistics/src/Models/Evidence.php`, `plugins/shafique/logistics/src/Services/EvidenceStore.php`, migration/storage config (new) | `plugins/shafique/logistics/tests/Feature/EvidenceRetentionTest.php` (new) | U2, Q7 |
@@ -79,7 +81,7 @@ Files marked new are proposed paths; implementation must follow current sibling 
 | U12 | Observation/receiving/allocation models and `plugins/shafique/logistics/src/Services/ReceiptReconciler.php` (new) | `plugins/shafique/logistics/tests/Feature/ReceiptReconciliationTest.php`, `plugins/shafique/logistics/tests/Feature/ReceiptConcurrencyTest.php` (new) | U7/U8/U11, Q2/Q6/Q10 |
 | U13 | `plugins/shafique/logistics/src/Services/CargoWorkflow.php`, `plugins/shafique/logistics/src/Services/CorrectionWorkflow.php`, cargo/outcome/case models (new) | `plugins/shafique/logistics/tests/Feature/CargoConservationTest.php`, `plugins/shafique/logistics/tests/Feature/CorrectionDependenciesTest.php` (new) | U5/U12, Q4/Q10 |
 | U14 | Existing Recon fixtures/support under `tests/Feature/Recon` | `tests/Feature/Recon/MatchAccountingIntegrationTest.php`, `tests/Feature/Recon/AutoMatchAtomicityTest.php`, `tests/Feature/Recon/MatchConcurrencyTest.php` | U1 |
-| U15 | `plugins/webkul/accounts/src/Services/PaymentRegistrar.php`, `plugins/webkul/accounts/src/Services/Reconciler.php`, `plugins/webkul/accounts/src/Services/MoveWorkflow.php`, owner instruction/result schema | `plugins/webkul/accounts/tests/Feature/Workflows/PaymentConcurrencyTest.php`, `plugins/webkul/accounts/tests/Feature/Workflows/SupplierAdvanceTest.php`, `plugins/webkul/accounts/tests/Feature/Workflows/PaymentRecipientTest.php` (new) | U14, Q5 |
+| U15 | `plugins/webkul/accounts/src/Services/PaymentRegistrar.php`, `plugins/webkul/accounts/src/Services/Reconciler.php`, `plugins/webkul/accounts/src/Services/MoveWorkflow.php`, owner instruction/result schema | `plugins/webkul/accounts/tests/Feature/Workflows/PaymentConcurrencyTest.php`, `plugins/webkul/accounts/tests/Feature/Workflows/SupplierAdvanceTest.php`, `plugins/webkul/accounts/tests/Feature/Workflows/PaymentRecipientTest.php` (new) | U14; Q5 for advances, recipient changes and freight-specific accounting, after independent native payment integrity repairs |
 | U16 | `plugins/shafique/logistics/src/Services/FreightWorkflow.php`, charge/allocation models/migrations/actions (new) | `plugins/shafique/logistics/tests/Feature/FreightSettlementTest.php`, `plugins/shafique/logistics/tests/Feature/FreightAllocationTest.php` (new) | U12/U13/U15, Q2/Q5/Q6 |
 | U17 | Logistics Filament resources/pages, `plugins/shafique/logistics/src/Queries/OperationalQueue.php`, views/language files (new) | `plugins/shafique/logistics/tests/Feature/OperationalWorkspaceTest.php`, `plugins/shafique/logistics/tests/Feature/DocumentAccessTest.php` (new) | U12/U13/U16, Q8/Q9 |
 | U18 | Trip/stop/release extensions, `plugins/shafique/logistics/src/Services/ConsignmentWorkflow.php`, carrier/pickup associations (new) | `plugins/shafique/logistics/tests/Feature/MultiStopReleaseTest.php`, `plugins/shafique/logistics/tests/Feature/CarrierConsignmentTest.php`, `plugins/shafique/logistics/tests/Feature/DistributorPickupTest.php` (new) | U11-U13/U16, Q6 |
@@ -127,7 +129,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Objective:** Prove and protect real advances, payments, recipients, residuals, reversals and unknown outcomes.
 - **Scope:** U14-U15.
 - **Affected modules:** `plugins/webkul/accounts/src/Services/PaymentRegistrar.php`, `plugins/webkul/accounts/src/Services/Reconciler.php`, `plugins/webkul/accounts/src/Services/MoveWorkflow.php`, payment/register models, request/API/UI callers, Recon test support.
-- **Dependencies:** P0; Q5.
+- **Dependencies:** P0. Native payment replay, residual and rollback safeguards may proceed independently; Q5 approval is required before implementing advance, recipient and freight-specific accounting rules.
 - **Database changes:** Owner-local operation identity, instruction/result uncertainty and recipient authorization fields if existing records cannot express them.
 - **Commands/APIs/contracts:** IC8 create/lookup/reconcile/reverse contract with stable business identity and changed-payload conflict.
 - **Business rules:** Logistics approval is not posting; genuine advance may precede bill; supplier, recipient and payer remain distinct; holds/claims do not erase liability.
@@ -140,6 +142,8 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 - **Out of scope:** New general ledger, fake final bill, generic payment provider integration.
 
 ## P2. Logistics control foundation
+
+The owner approved the scoped evidence and suspension controls on 2026-10-15; see the [decision register](12-OPEN-DECISIONS.md#evidence-and-suspension-controls-approved--2026-10-15). U7 may be implemented and tested with synthetic evidence. Real uploads must remain blocked until an approved retention policy is configured. U8 must serialize affected commands with suspension and invalidate unused approvals. These approvals do not establish retention periods, monetary limits, recovery targets or live-pilot acceptance.
 
 - **Objective:** Establish exact-company policies, protected evidence, command replay, scoped approvals, suspension and lifecycle safety.
 - **Scope:** U2, U7, U8.
@@ -158,7 +162,7 @@ U2 and U14 have one discovery step and one implementation step. P0 may inspect, 
 
 ## P3. Commercial quantity, demand, booking, and loading
 
-The proposed [stock-readiness subdivisions of U9/U10/U17](03-WORKFLOWS-AND-LIFECYCLES.md#bounded-implementation-sequence) cover demand selection, current-stock assessment, expected production and shortage recovery. The five related policy choices remain open; current workbook formulas and manual selections do not approve their target behavior. Detailed readiness service tasks must retain this phase's Inventory, control and decision prerequisites; U17 supplies the later operational workspace.
+The [stock-readiness subdivisions of U9/U10/U17](03-WORKFLOWS-AND-LIFECYCLES.md#bounded-implementation-sequence) cover demand selection, current-stock assessment, expected production and shortage recovery. The project owner approved the scoped quantity, loading and first-journey rules on 2026-10-15 and confirmed that SF1 and SF2 share one legal Company; see [the decision register](12-OPEN-DECISIONS.md#quantity-loading-and-first-journey-decision-proposal--2026-10-15). Actual product and site mappings, capacity and quality profiles, operator assignments, remaining decisions and this phase's technical dependencies remain required. Workbook formulas and manual selections do not replace those approved rules. U17 supplies the later operational workspace.
 
 - **Objective:** Preserve historical quantity meaning and produce a verified executable load without shadow inventory.
 - **Scope:** U6, U9, U10.
@@ -170,7 +174,7 @@ The proposed [stock-readiness subdivisions of U9/U10/U17](03-WORKFLOWS-AND-LIFEC
 - **Validations:** Eligible source revision, exact conversion/rounding, product/lot/quality, segment capacity, provider/endpoint/role compatibility.
 - **Permissions:** Planner, loader, verifier and configured freight approver separation.
 - **Integration points:** IC1, IC2, IC6, IC7; source change invalidates or remaps claims.
-- **Tests:** 6x12 snapshot survives 6x18 master change; nested pack counted once; competing claims; source reduction; partial load/backorder; replacement vehicle; basic-phone booking.
+- **Tests:** 6x12 snapshot survives 6x18 master change; nested pack counted once; competing claims; source reduction cancels only unissued demand and cannot invent a physical return; completed linked returns and onsite corrections have explicit effects; partial load/backorder; replacement vehicle; basic-phone booking.
 - **Acceptance:** A non-live one-operation journey reaches verified load with explainable native remainder and no unsupported inference.
 - **Migration/refactoring:** Legacy provenance stays unknown; no current-master historical backfill.
 - **Out of scope:** Live stock issue/departure, automatic rates/routes, arbitrary mixed-pack editor.
@@ -211,7 +215,7 @@ The proposed [stock-readiness subdivisions of U9/U10/U17](03-WORKFLOWS-AND-LIFEC
 
 ## P6. All transport modes and operator experience
 
-Complete U17/U18 first for dedicated vehicles and multi-stop delivery, then add and qualify carrier consignments and distributor pickup. P6 exit and P8 activation still require all four modes under the current approved pilot scope.
+Implement the dedicated-vehicle and multi-stop portions of U17/U18 first, then implement and qualify carrier consignments and distributor pickup. Complete U17/U18 and P6 only after all four modes satisfy their acceptance criteria. P8 activation still requires all four modes under the current approved pilot scope.
 
 - **Objective:** Complete all mandatory modes through shared controls and usable role workspaces/documents.
 - **Scope:** U17-U18.
