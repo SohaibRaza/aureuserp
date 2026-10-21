@@ -7,6 +7,8 @@ use App\Models\Recon\ReconMatch;
 use App\Models\Recon\ReconMatchLine;
 use App\Models\Recon\StatementLine;
 use App\Services\Recon\ReconciliationLifecycleService;
+use Illuminate\Database\Connection;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
@@ -30,6 +32,25 @@ beforeEach(function (): void {
     config()->set('reconciliation.financial_mutations_enabled', true);
     config()->set('reconciliation.require_company_rollout', false);
 });
+
+function tryPeriodBoundaryLock(Connection $connection, int $companyId, bool $exclusive = false): bool
+{
+    if ($connection->getDriverName() === 'pgsql') {
+        $function = $exclusive ? 'pg_try_advisory_xact_lock' : 'pg_try_advisory_xact_lock_shared';
+
+        return (bool) $connection->selectOne("SELECT {$function}(?, ?) AS acquired", [0x41525044, $companyId])->acquired;
+    }
+    try {
+        return $connection->table('companies')->where('id', $companyId)
+            ->lock($exclusive ? 'FOR UPDATE NOWAIT' : 'FOR SHARE NOWAIT')->first(['id']) !== null;
+    } catch (QueryException $exception) {
+        if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) {
+            throw $exception;
+        }
+
+        return false;
+    }
+}
 
 function periodBoundaryReconciliation(string $status): BankReconciliation
 {
@@ -148,12 +169,18 @@ it('retains the actual completion gate until its enclosing transaction ends', fu
             $completed = app(ReconciliationLifecycleService::class)->complete($reconciliation);
             expect($completed->status)->toBe('completed')
                 ->and($completed->snapshots()->count())->toBe(1)
-                ->and((bool) $competitor->selectOne('SELECT pg_try_advisory_xact_lock_shared(?, ?) AS acquired', [0x41525044, $reconciliation->company_id])->acquired)->toBeFalse()
+                ->and(tryPeriodBoundaryLock($competitor, (int) $reconciliation->company_id))->toBeFalse()
                 ->and(fn () => app(AccountingDateGuard::class)->assertReconciliationPeriodOpen($move))->toThrow(ValidationException::class);
         } finally {
             DB::rollBack();
         }
-        expect((bool) $competitor->selectOne('SELECT pg_try_advisory_xact_lock_shared(?, ?) AS acquired', [0x41525044, $reconciliation->company_id])->acquired)->toBeTrue();
+        if (DB::getDriverName() === 'mysql') {
+            // InnoDB retains row locks after savepoint rollback; the full transaction must end.
+            expect(tryPeriodBoundaryLock($competitor, (int) $reconciliation->company_id))->toBeFalse();
+            DB::rollBack();
+            DB::beginTransaction();
+        }
+        expect(tryPeriodBoundaryLock($competitor, (int) $reconciliation->company_id))->toBeTrue();
     } finally {
         $competitor->rollBack();
         $competitor->disconnect();
@@ -164,13 +191,19 @@ it('holds the period boundary through the accounting transaction', function (boo
     $reconciliation = periodBoundaryReconciliation('review');
     $move = periodBoundaryMove($reconciliation);
     $connection = DB::connection();
+    if ($connection->getDriverName() === 'mysql') {
+        // Committed fixtures avoid retaining FK shared locks on Company before the contender starts.
+        while ($connection->transactionLevel() > 0) {
+            $connection->commit();
+        }
+        $connection->beginTransaction();
+    }
     $competitor = DB::build([...$connection->getConfig(), 'name' => 'accounting_period_competitor']);
     $competitor->beginTransaction();
     try {
-        expect($competitor->selectOne('SELECT pg_backend_pid() AS pid')->pid)
-            ->not->toBe($connection->selectOne('SELECT pg_backend_pid() AS pid')->pid);
-        $function = $completionFirst ? 'pg_try_advisory_xact_lock' : 'pg_try_advisory_xact_lock_shared';
-        expect((bool) $competitor->selectOne("SELECT {$function}(?, ?) AS acquired", [0x41525044, $reconciliation->company_id])->acquired)->toBeTrue();
+        $pidQuery = $connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS pid' : 'SELECT CONNECTION_ID() AS pid';
+        expect($competitor->selectOne($pidQuery)->pid)->not->toBe($connection->selectOne($pidQuery)->pid);
+        expect(tryPeriodBoundaryLock($competitor, (int) $reconciliation->company_id, $completionFirst))->toBeTrue();
 
         if ($completionFirst) {
             expect(fn () => app(MoveWorkflow::class)->post($move))

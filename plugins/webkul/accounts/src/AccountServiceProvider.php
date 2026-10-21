@@ -144,6 +144,7 @@ class AccountServiceProvider extends PackageServiceProvider
                 '2026_09_10_000006_protect_reconciliation_audit_events',
                 '2026_09_11_000001_seed_reconciliation_accounts',
                 '2026_09_24_200000_add_payment_registration_results',
+                '2026_10_21_000200_add_mysql_payment_request_locks',
             ])
             ->runsMigrations()
             ->hasSettings([

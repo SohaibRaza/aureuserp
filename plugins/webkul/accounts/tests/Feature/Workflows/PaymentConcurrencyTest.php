@@ -19,12 +19,21 @@ use Webkul\PluginManager\Package;
 
 require_once __DIR__.'/../../Helpers/AccountHelper.php';
 
+function paymentConcurrencyBlocked(int $connectionId): bool
+{
+    if (DB::getDriverName() === 'pgsql') {
+        return (bool) DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock') AS blocked", [$connectionId])->blocked;
+    }
+
+    return (bool) DB::selectOne('SELECT EXISTS (SELECT 1 FROM performance_schema.data_lock_waits AS waits JOIN performance_schema.threads AS threads ON threads.THREAD_ID = waits.REQUESTING_THREAD_ID WHERE threads.PROCESSLIST_ID = ?) AS blocked', [$connectionId])->blocked;
+}
+
 it('serializes payment instructions with committed replay and residual evidence', function (string $scenario): void {
     $sameInstruction = $scenario === 'same instruction';
     $sameRequest = $scenario === 'same request';
     $requestKey = $sameRequest ? 'race-'.fake()->uuid() : '';
-    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
-        test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
+    if (! config('testing.run_reconciliation_concurrency') || ! in_array(DB::connection()->getDriverName(), ['pgsql', 'mysql'], true)) {
+        test()->markTestSkipped('Requires an opted-in disposable PostgreSQL or MySQL runner.');
     }
     TestBootstrapHelper::ensurePluginInstalled('accounts');
     DB::table('plugins')->updateOrInsert(['name' => 'accounts'], ['is_installed' => true, 'is_active' => true, 'updated_at' => now()]);
@@ -62,7 +71,7 @@ Illuminate\Support\Facades\Event::listen(Webkul\Account\Events\MovePaid::class, 
     file_put_contents($argv[2].'/notification-'.$argv[3], 'committed');
 });
 $connection = Illuminate\Support\Facades\DB::connection();
-$pid = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
+$pid = $connection->selectOne($connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS id' : 'SELECT CONNECTION_ID() AS id')->id;
 $register = Webkul\Account\Models\PaymentRegister::findOrFail((int) $argv[4]);
 file_put_contents($argv[2].'/ready-'.$argv[3], (string) $pid);
 $deadline = microtime(true) + 20;
@@ -119,7 +128,7 @@ PHP;
         $deadline = microtime(true) + 20;
         $contended = false;
         while (microtime(true) < $deadline) {
-            $contended = (bool) DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock') AS blocked", [$secondPid])->blocked;
+            $contended = paymentConcurrencyBlocked($secondPid);
             if ($contended || ! $processes[1]->isRunning()) {
                 break;
             }
@@ -164,8 +173,8 @@ PHP;
 })->with(['same instruction', 'distinct instructions', 'same request']);
 
 it('serializes payment against reverse and cancel on the same invoice', function (): void {
-    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
-        test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
+    if (! config('testing.run_reconciliation_concurrency') || ! in_array(DB::connection()->getDriverName(), ['pgsql', 'mysql'], true)) {
+        test()->markTestSkipped('Requires an opted-in disposable PostgreSQL or MySQL runner.');
     }
     TestBootstrapHelper::ensurePluginInstalled('accounts');
     DB::table('plugins')->updateOrInsert(['name' => 'accounts'], ['is_installed' => true, 'is_active' => true, 'updated_at' => now()]);
@@ -190,7 +199,7 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 Illuminate\Support\Facades\Auth::loginUsingId((int) $argv[5]);
 Illuminate\Support\Facades\URL::resolveMissingNamedRoutesUsing(fn () => '#');
 $connection = Illuminate\Support\Facades\DB::connection();
-$pid = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
+$pid = $connection->selectOne($connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS id' : 'SELECT CONNECTION_ID() AS id')->id;
 $role = $argv[3];
 file_put_contents($argv[2].'/ready-'.$role, (string) $pid);
 $deadline = microtime(true) + 20;
@@ -246,7 +255,7 @@ PHP;
         $deadline = microtime(true) + 20;
         $blocked = false;
         while (microtime(true) < $deadline) {
-            $blocked = (bool) DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock') AS blocked", [$reversalPid])->blocked;
+            $blocked = paymentConcurrencyBlocked($reversalPid);
             if ($blocked || ! $processes['reversal']->isRunning()) {
                 break;
             }
@@ -283,8 +292,8 @@ PHP;
 });
 
 it('serializes competing posts of the same preloaded draft with one rank and confirmation', function (): void {
-    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
-        test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
+    if (! config('testing.run_reconciliation_concurrency') || ! in_array(DB::connection()->getDriverName(), ['pgsql', 'mysql'], true)) {
+        test()->markTestSkipped('Requires an opted-in disposable PostgreSQL or MySQL runner.');
     }
     TestBootstrapHelper::ensurePluginInstalled('accounts');
     DB::table('plugins')->updateOrInsert(['name' => 'accounts'], ['is_installed' => true, 'is_active' => true, 'updated_at' => now()]);
@@ -309,7 +318,7 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 Illuminate\Support\Facades\Auth::loginUsingId((int) $argv[5]);
 Illuminate\Support\Facades\URL::resolveMissingNamedRoutesUsing(fn () => '#');
 $connection = Illuminate\Support\Facades\DB::connection();
-$pid = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
+$pid = $connection->selectOne($connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS id' : 'SELECT CONNECTION_ID() AS id')->id;
 $move = Webkul\Account\Models\Move::with('lines')->findOrFail((int) $argv[4]);
 Illuminate\Support\Facades\Event::listen(Webkul\Account\Events\MoveConfirmed::class, function () use ($argv): void {
     file_put_contents($argv[2].'/confirmation-'.$argv[3], 'confirmed');
@@ -360,7 +369,7 @@ PHP;
         $deadline = microtime(true) + 20;
         $blocked = false;
         while (microtime(true) < $deadline) {
-            $blocked = (bool) DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock') AS blocked", [$secondPid])->blocked;
+            $blocked = paymentConcurrencyBlocked($secondPid);
             if ($blocked || ! $processes[1]->isRunning()) {
                 break;
             }
@@ -399,8 +408,8 @@ PHP;
 
 it('serializes reconciliation and lifecycle boundaries on persisted move roots', function (string $scenario): void {
     $paymentConfirmation = $scenario === 'payment confirmation versus cancel';
-    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
-        test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
+    if (! config('testing.run_reconciliation_concurrency') || ! in_array(DB::connection()->getDriverName(), ['pgsql', 'mysql'], true)) {
+        test()->markTestSkipped('Requires an opted-in disposable PostgreSQL or MySQL runner.');
     }
     TestBootstrapHelper::ensurePluginInstalled('accounts');
     DB::table('plugins')->updateOrInsert(['name' => 'accounts'], ['is_installed' => true, 'is_active' => true, 'updated_at' => now()]);
@@ -442,7 +451,7 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 Illuminate\Support\Facades\Auth::loginUsingId((int) $argv[5]);
 Illuminate\Support\Facades\URL::resolveMissingNamedRoutesUsing(fn () => '#');
 $connection = Illuminate\Support\Facades\DB::connection();
-$pid = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
+$pid = $connection->selectOne($connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS id' : 'SELECT CONNECTION_ID() AS id')->id;
 $move = Webkul\Account\Models\Move::with('paymentTermLines')->findOrFail((int) $argv[4]);
 $scenario = $argv[6];
 $index = $argv[3];
@@ -532,7 +541,7 @@ PHP;
         $deadline = microtime(true) + 20;
         $blocked = false;
         while (microtime(true) < $deadline) {
-            $blocked = (bool) DB::selectOne("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock') AS blocked", [$secondPid])->blocked;
+            $blocked = paymentConcurrencyBlocked($secondPid);
             if ($blocked || ! $processes[1]->isRunning()) {
                 break;
             }

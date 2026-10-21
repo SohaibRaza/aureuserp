@@ -2,6 +2,7 @@
 
 namespace Webkul\Account\Services;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -19,6 +20,31 @@ class AccountingDateGuard
         $connection = DB::connection();
         if ($connection->transactionLevel() === 0) {
             throw new LogicException('Accounting period locks require a transaction.');
+        }
+
+        if ($connection->getDriverName() === 'mysql') {
+            $isolation = $connection->selectOne('SELECT @@transaction_isolation AS isolation')->isolation;
+            if (strtolower(str_replace('-', ' ', $isolation)) !== 'read committed') {
+                throw new LogicException('Accounting period boundaries require READ COMMITTED isolation.');
+            }
+            try {
+                // The Company exists before any journal; row locks survive the enclosing transaction.
+                $company = $connection->table('companies')->where('id', $companyId)
+                    ->lock($completing ? 'FOR UPDATE NOWAIT' : 'FOR SHARE NOWAIT')->first(['id']);
+            } catch (QueryException $exception) {
+                if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) {
+                    throw $exception;
+                }
+                throw ValidationException::withMessages(['date' => __('accounts::system.move.bank-period-busy')]);
+            }
+            if (! $company) {
+                throw new LogicException('Accounting period locks require an existing Company.');
+            }
+
+            return;
+        }
+        if ($connection->getDriverName() !== 'pgsql') {
+            throw new LogicException('Accounting period locks require PostgreSQL or MySQL.');
         }
 
         $function = $completing ? 'pg_try_advisory_xact_lock' : 'pg_try_advisory_xact_lock_shared';

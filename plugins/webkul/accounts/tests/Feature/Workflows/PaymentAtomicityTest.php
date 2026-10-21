@@ -289,3 +289,47 @@ it('registers full same-currency batches for different partners and replays thei
         ->and((float) $other->refresh()->amount_residual)->toBe(0.0)
         ->and($service->register($register->fresh()))->toBe($ids);
 });
+
+it('keeps request keys case sensitive on both engines', function (): void {
+    AccountHelper::pay($this->invoice, 20);
+    $template = PaymentRegister::query()->latest('id')->firstOrFail();
+    $data = [...Arr::only($template->getAttributes(), $template->getFillable()), 'amount' => 60];
+    $lineIds = $template->lines()->pluck('accounts_account_move_lines.id')->all();
+    $prefix = 'case-'.fake()->uuid();
+    $service = app(PaymentRegistrar::class);
+
+    $first = $service->registerForMove($this->invoice, $data, $lineIds, $prefix.'A', ['amount' => 60]);
+    $second = $service->registerForMove($this->invoice, $data, $lineIds, $prefix.'a', ['amount' => 60]);
+
+    expect($second)->not->toBe($first)
+        ->and($service->replayRequest($this->invoice, $prefix.'A', ['amount' => 60]))->toBe($first)
+        ->and($service->replayRequest($this->invoice, $prefix.'a', ['amount' => 60]))->toBe($second)
+        ->and((float) $this->invoice->fresh()->amount_residual)->toBe(60.0);
+});
+
+it('removes a keyed payment outcome on outer rollback and permits a clean retry', function (): void {
+    AccountHelper::pay($this->invoice, 20);
+    $template = PaymentRegister::query()->latest('id')->firstOrFail();
+    $data = [...Arr::only($template->getAttributes(), $template->getFillable()), 'amount' => 60];
+    $lineIds = $template->lines()->pluck('accounts_account_move_lines.id')->all();
+    $key = 'rollback-'.fake()->uuid();
+    $service = app(PaymentRegistrar::class);
+    $payments = Payment::count();
+
+    expect(fn () => DB::transaction(function () use ($service, $data, $lineIds, $key): void {
+        $service->registerForMove($this->invoice, $data, $lineIds, $key, ['amount' => 60]);
+        throw new RuntimeException('Caller rejected payment');
+    }))->toThrow(RuntimeException::class, 'Caller rejected payment');
+    expect(Payment::count())->toBe($payments)
+        ->and($service->replayRequest($this->invoice, $key, ['amount' => 60]))->toBeNull()
+        ->and((float) $this->invoice->fresh()->amount_residual)->toBe(180.0);
+    if (DB::getDriverName() === 'mysql') {
+        expect(DB::table('accounts_payment_request_locks')->where('request_hash', hash('sha256', 'accounts.payment:'.$this->invoice->company_id.':'.$key))->exists())->toBeFalse();
+    }
+
+    $ids = $service->registerForMove($this->invoice, $data, $lineIds, $key, ['amount' => 60]);
+    expect($ids)->toHaveCount(1)
+        ->and(Payment::count())->toBe($payments + 1)
+        ->and($service->replayRequest($this->invoice, $key, ['amount' => 60]))->toBe($ids)
+        ->and((float) $this->invoice->fresh()->amount_residual)->toBe(120.0);
+});

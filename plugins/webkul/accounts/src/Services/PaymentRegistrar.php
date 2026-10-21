@@ -200,7 +200,17 @@ class PaymentRegistrar
             }
             if ($key !== null) {
                 $this->validateRequestKey($key);
-                $connection->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ['accounts.payment:'.$move->company_id.':'.$key]);
+                $lockKey = 'accounts.payment:'.$move->company_id.':'.$key;
+                if ($connection->getDriverName() === 'mysql') {
+                    // Upsert takes an exclusive InnoDB row lock until the outer transaction ends.
+                    $connection->table('accounts_payment_request_locks')->upsert(
+                        [['request_hash' => hash('sha256', $lockKey)]], ['request_hash'], ['request_hash'],
+                    );
+                } elseif ($connection->getDriverName() === 'pgsql') {
+                    $connection->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$lockKey]);
+                } else {
+                    throw new \LogicException('Payment request locks require PostgreSQL or MySQL.');
+                }
                 $saved = $connection->table('accounts_payment_registers')->where('company_id', $move->company_id)->where('request_key', $key)->first();
                 if ($saved && $this->registrationFingerprint([...((array) $saved), ...$paymentData], $lineIds) !== $saved->registration_fingerprint) {
                     throw new InvalidArgumentException(__('accounts::system.payment-registration.request-argument-conflict'));

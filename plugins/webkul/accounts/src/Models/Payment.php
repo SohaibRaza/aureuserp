@@ -74,9 +74,11 @@ class Payment extends Model
     ];
 
     protected $casts = [
-        'date'         => 'date',
-        'state'        => PaymentStatus::class,
-        'payment_type' => PaymentType::class,
+        'date'          => 'date',
+        'state'         => PaymentStatus::class,
+        'payment_type'  => PaymentType::class,
+        'is_reconciled' => 'boolean',
+        'is_matched'    => 'boolean',
     ];
 
     public array $moveRelatedFields = [
