@@ -15,6 +15,17 @@ class OperationAssembler
             return;
         }
 
+        (new Move)->getConnection()->transaction(function () use ($moves): void {
+            $this->assignLockedMovesToOperations(Move::lockForStockMutation($moves, action: 'assign_operations', preservePendingChanges: true));
+        });
+    }
+
+    protected function assignLockedMovesToOperations(Collection $moves): void
+    {
+        if ($moves->isEmpty()) {
+            return;
+        }
+
         $grouped = $moves->groupBy(fn (Move $move) => implode('_', $move->operationGroupingKey()));
 
         foreach ($grouped as $group) {

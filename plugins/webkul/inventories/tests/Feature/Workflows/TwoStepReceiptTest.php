@@ -1,12 +1,15 @@
 <?php
 
+use Illuminate\Validation\ValidationException;
 use Webkul\Inventory\Enums\LocationType;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\OperationState;
 use Webkul\Inventory\Enums\ProcureMethod;
 use Webkul\Inventory\Enums\ReceptionStep;
+use Webkul\Inventory\Enums\RuleAuto;
 use Webkul\Inventory\Facades\Inventory;
 use Webkul\Inventory\Models\Operation;
+use Webkul\Inventory\Models\Rule;
 
 require_once __DIR__.'/../../../../support/tests/Helpers/TestBootstrapHelper.php';
 require_once __DIR__.'/../../Helpers/InventoryHelper.php';
@@ -563,4 +566,28 @@ it('skips a storage category location when the incoming quantity exceeds its cap
     $storageLine = storageOperation($this->warehouse)->moves->first()->lines->first();
 
     expect($storageLine->destination_location_id)->toBe($this->stock->id);
+});
+
+it('settles a transparent receipt route into its putaway destination before making history immutable', function (): void {
+    $rule = Rule::query()->where('source_location_id', $this->input->id)->where('destination_location_id', $this->stock->id)->firstOrFail();
+    $rule->update(['auto' => RuleAuto::TRANSPARENT]);
+    $bin = InventoryHelper::sublocation($this->stock);
+    InventoryHelper::putawayRule($this->stock, $bin, $this->product);
+    $operation = validatedReceiptLeg($this->warehouse, $this->product, 10);
+    $move = $operation->moves()->sole();
+    $line = $move->lines()->sole();
+    $result = $operation->terminalResult;
+
+    expect($operation->state)->toBe(OperationState::DONE)
+        ->and($move->state)->toBe(MoveState::DONE)
+        ->and($move->destination_location_id)->toBe($this->stock->id)
+        ->and($line->destination_location_id)->toBe($bin->id)
+        ->and(InventoryHelper::onHand($this->product, $this->input))->toBe(0.0)
+        ->and(InventoryHelper::onHand($this->product, $bin))->toBe(10.0)
+        ->and(storageOperation($this->warehouse))->toBeNull();
+    Inventory::completeTransfer($operation->fresh());
+    expect($operation->fresh()->terminalResult->id)->toBe($result->id)
+        ->and(InventoryHelper::onHand($this->product, $bin))->toBe(10.0);
+    expect(fn () => $move->update(['destination_location_id' => $this->input->id]))
+        ->toThrow(ValidationException::class);
 });

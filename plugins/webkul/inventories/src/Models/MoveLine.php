@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Webkul\Inventory\Database\Factories\MoveLineFactory;
 use Webkul\Inventory\Enums\MoveState;
@@ -29,7 +30,7 @@ class MoveLine extends Model
     public function save(array $options = []): bool
     {
         return $this->getConnection()->transaction(function () use ($options): bool {
-            $this->lockStockMutation();
+            $this->lockStockMutation($this->exists ? 'move_line.update' : 'move_line.create');
 
             $saved = parent::save($options);
 
@@ -44,23 +45,42 @@ class MoveLine extends Model
     public function delete(): ?bool
     {
         return $this->getConnection()->transaction(function (): ?bool {
-            $this->lockStockMutation();
+            $this->lockStockMutation('move_line.delete');
 
             return parent::delete();
         });
     }
 
-    protected function lockStockMutation(): void
+    protected function lockStockMutation(string $action): void
     {
         if ($this->getConnection() !== (new Move)->getConnection()) {
             throw new InvalidArgumentException(__('inventories::system.move-line.connection-mismatch'));
         }
 
         $moves = Move::query()->whereKey(array_filter([$this->move_id, $this->getRawOriginal('move_id')]))->get();
-        Move::lockForStockMutation($moves, array_values(array_filter([$this->product_id, $this->getRawOriginal('product_id')])));
+        Move::lockForStockMutation(
+            $moves,
+            array_values(array_filter([$this->product_id, $this->getRawOriginal('product_id')])),
+            array_values(array_filter([$this->operation_id, $this->getRawOriginal('operation_id')])),
+            $action,
+            $this->getDirty(),
+        );
+
+        if ((! $this->exists || $this->isDirty(['move_id', 'operation_id']))
+            && OperationResult::query()->whereIn('operation_id', array_filter([
+                $this->operation_id,
+                Move::query()->whereKey($this->move_id)->value('operation_id'),
+            ]))->exists()) {
+            throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+        }
 
         if ($this->exists) {
             $current = static::query()->whereKey($this->id)->lockForUpdate()->firstOrFail();
+            if (in_array($current->state, [MoveState::DONE, MoveState::CANCELED], true)
+                && ($action === 'move_line.delete' || $this->isDirty(['qty', 'uom_qty', 'move_id', 'operation_id', 'product_id', 'uom_id', 'source_location_id', 'destination_location_id', 'lot_id', 'package_id', 'result_package_id', 'partner_id', 'state', 'company_id']))) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+
             foreach (['qty', 'uom_qty', 'move_id', 'product_id', 'uom_id', 'source_location_id', 'destination_location_id', 'lot_id', 'package_id', 'result_package_id', 'state', 'is_picked', 'company_id'] as $field) {
                 if ($this->getRawOriginal($field) != $current->getRawOriginal($field)) {
                     throw new InvalidArgumentException(__('inventories::system.move-line.stale-line'));

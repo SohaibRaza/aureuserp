@@ -4,7 +4,6 @@ namespace Webkul\Barcode\Livewire;
 
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Livewire\Component;
 use Throwable;
@@ -399,41 +398,11 @@ class Operation extends Component
 
     private function validateOperation(InventoryOperation $operation, bool $cancelBackOrder = false): InventoryOperation
     {
-        return DB::transaction(function () use ($operation, $cancelBackOrder): InventoryOperation {
-            $operation = $operation->load([
-                'moveLines.product.uom',
-                'moveLines.uom',
-                'moveLines.move',
-                'moveLines.sourceLocation',
-                'moveLines.lot',
-                'moveLines.package',
-            ]);
-
-            if ($this->countedMoveLineIds !== []) {
-                $this->syncCountedMoveLineQuantitiesForValidation($operation);
-            }
-
-            return Inventory::completeTransfer($operation->fresh(), $cancelBackOrder);
-        });
-    }
-
-    private function syncCountedMoveLineQuantitiesForValidation(InventoryOperation $operation): void
-    {
-        foreach ($operation->moveLines as $moveLine) {
-            $quantityToValidate = min(
-                (float) $moveLine->qty,
-                max(0, (float) ($this->countedMoveLineQuantities[$moveLine->id] ?? 0))
-            );
-
-            if (
-                (float) $moveLine->qty === $quantityToValidate
-            ) {
-                continue;
-            }
-
-            $moveLine->qty = $quantityToValidate;
-            $moveLine->save();
-        }
+        return Inventory::completeTransfer(
+            $operation,
+            $cancelBackOrder,
+            $this->countedMoveLineIds === [] ? null : $this->countedMoveLineQuantities,
+        );
     }
 
     private function assignEditingMoveLineLot(MoveLine $moveLine): void

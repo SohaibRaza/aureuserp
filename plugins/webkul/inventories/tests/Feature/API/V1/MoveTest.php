@@ -80,12 +80,15 @@ it('forbids listing moves without permission', function () {
 it('lists move lines for authorized users', function () {
     actingAsInventoryMoveApiUser(['view_any_inventory_move']);
 
-    createMoveLineRecord();
-    createMoveLineRecord();
+    $first = createMoveLineRecord();
+    $second = createMoveLineRecord();
+    $total = MoveLine::query()->count();
 
-    $this->getJson(inventoryMoveRoute())
+    $this->getJson(inventoryMoveRoute().'?sort=-id')
         ->assertOk()
-        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('data.0.id', $second->id)
+        ->assertJsonPath('data.1.id', $first->id)
+        ->assertJsonPath('meta.total', $total)
         ->assertJsonStructure(['data' => ['*' => MOVE_LINE_JSON_STRUCTURE]]);
 });
 
@@ -154,11 +157,13 @@ it('filters move lines by warehouse id through move relation', function () {
 it('supports includes on move listing', function () {
     actingAsInventoryMoveApiUser(['view_any_inventory_move']);
 
-    createMoveLineRecord();
+    $line = createMoveLineRecord();
 
-    $this->getJson(inventoryMoveRoute().'?include=move,operation,product')
+    $this->getJson(inventoryMoveRoute().'?filter[id]='.$line->id.'&include=move,operation,product')
         ->assertOk()
-        ->assertJsonPath('data.0.move.id', fn ($id) => is_int($id))
-        ->assertJsonPath('data.0.operation.id', fn ($id) => is_int($id))
-        ->assertJsonPath('data.0.product.id', fn ($id) => is_int($id));
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $line->id)
+        ->assertJsonPath('data.0.move.id', $line->move_id)
+        ->assertJsonPath('data.0.operation.id', $line->operation_id)
+        ->assertJsonPath('data.0.product.id', $line->product_id);
 });

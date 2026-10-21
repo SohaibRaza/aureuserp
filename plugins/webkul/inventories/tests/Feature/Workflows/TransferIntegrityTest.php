@@ -41,6 +41,33 @@ function completedPhase2aDelivery(float $quantity = 10): array
     return [$delivery->refresh(), $product];
 }
 
+function completedMixedUomPhase2aDelivery(bool $productInDozens): array
+{
+    $warehouse = InventoryHelper::warehouse();
+    $productUom = $productInDozens ? InventoryHelper::dozensUom() : InventoryHelper::unitsUom();
+    $moveUom = $productInDozens ? InventoryHelper::unitsUom() : InventoryHelper::dozensUom();
+    $product = InventoryHelper::product(['uom_id' => $productUom->id, 'uom_po_id' => $productUom->id]);
+    $stockQuantity = $productInDozens ? 2.0 : 24.0;
+    $moveQuantity = $productInDozens ? 24.0 : 2.0;
+
+    InventoryHelper::stockUp($product, $warehouse->lotStockLocation, $stockQuantity);
+    $delivery = InventoryHelper::delivery($warehouse, [[$product, $moveQuantity, $moveUom]]);
+    Inventory::confirmTransfer($delivery);
+    Inventory::completeTransfer($delivery->refresh());
+    $delivery->refresh();
+    $sourceMove = $delivery->moves->sole();
+
+    expect($delivery->state)->toBe(OperationState::DONE)
+        ->and($sourceMove->state)->toBe(MoveState::DONE)
+        ->and($sourceMove->uom_id)->toBe($moveUom->id)
+        ->and((float) $sourceMove->quantity)->toBe($moveQuantity)
+        ->and((float) $sourceMove->product_qty)->toBe($stockQuantity)
+        ->and(InventoryHelper::onHand($product, $delivery->sourceLocation))->toBe(0.0)
+        ->and(InventoryHelper::onHand($product, $delivery->destinationLocation))->toBe($stockQuantity);
+
+    return [$delivery, $product, $moveQuantity, $stockQuantity];
+}
+
 function phase2aReturnEffects(Operation $source): array
 {
     return [
@@ -71,7 +98,7 @@ it('does not leave effects when no return quantities are supplied', function ():
     $before = phase2aReturnEffects($delivery);
 
     expect(fn () => Inventory::createReturn($delivery))
-        ->toThrow(InvalidArgumentException::class, 'A return requires quantities for existing source moves.');
+        ->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.missing-source-moves'));
 
     expect(phase2aReturnEffects($delivery))->toBe($before);
 });
@@ -83,7 +110,7 @@ it('rejects a move from another operation without effects', function (): void {
 
     expect(fn () => Inventory::createReturn($delivery, [
         $otherDelivery->moves->first()->id => 1,
-    ]))->toThrow(InvalidArgumentException::class, 'A return requires quantities for existing source moves.');
+    ]))->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.missing-source-moves'));
 
     expect(phase2aReturnEffects($delivery))->toBe($before);
 });
@@ -94,7 +121,7 @@ it('rejects malformed or non-positive return quantities without effects', functi
 
     expect(fn () => Inventory::createReturn($delivery, [
         $delivery->moves->first()->id => $quantity,
-    ]))->toThrow(InvalidArgumentException::class, 'Return quantities must be positive.');
+    ]))->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.positive-quantity'));
 
     expect(phase2aReturnEffects($delivery))->toBe($before);
 })->with([
@@ -128,6 +155,185 @@ it('preserves the supported explicit full-return behavior', function (): void {
 
     expect((float) $return->refresh()->moves->sole()->product_uom_qty)
         ->toBe((float) $sourceMove->product_uom_qty);
+});
+
+it('rejects returns beyond the quantity actually delivered', function (): void {
+    [$delivery] = completedPhase2aDelivery();
+    $sourceMove = $delivery->moves->first();
+
+    $first = Inventory::createReturn($delivery, [$sourceMove->id => 4]);
+    $before = phase2aReturnEffects($delivery);
+
+    expect(fn () => Inventory::createReturn($delivery, [$sourceMove->id => 7]))
+        ->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.quantity-exceeded'));
+
+    expect(phase2aReturnEffects($delivery))->toBe($before)
+        ->and($first->fresh())->not->toBeNull();
+});
+
+it('supports a full return when the completed move and product use different units', function (bool $productInDozens): void {
+    [$delivery, $product, $moveQuantity, $stockQuantity] = completedMixedUomPhase2aDelivery($productInDozens);
+    $sourceMove = $delivery->moves->sole();
+
+    $return = Inventory::createReturn($delivery, [$sourceMove->id => $moveQuantity]);
+    $returnMove = $return->refresh()->moves->sole();
+
+    expect($returnMove->origin_returned_move_id)->toBe($sourceMove->id)
+        ->and($returnMove->uom_id)->toBe($product->uom_id)
+        ->and((float) $returnMove->product_uom_qty)->toBe($stockQuantity)
+        ->and((float) $returnMove->product_qty)->toBe($stockQuantity);
+
+    Inventory::completeTransfer($return);
+
+    expect($return->refresh()->state)->toBe(OperationState::DONE)
+        ->and(InventoryHelper::onHand($product, $delivery->sourceLocation))->toBe($stockQuantity)
+        ->and(InventoryHelper::onHand($product, $delivery->destinationLocation))->toBe(0.0);
+})->with([
+    'dozens delivered for a product in units' => false,
+    'units delivered for a product in dozens' => true,
+]);
+
+it('rejects an excessive mixed-unit return without effects', function (bool $productInDozens): void {
+    [$delivery, , $moveQuantity] = completedMixedUomPhase2aDelivery($productInDozens);
+    $sourceMove = $delivery->moves->sole();
+    $before = phase2aReturnEffects($delivery);
+
+    expect(fn () => Inventory::createReturn($delivery, [$sourceMove->id => $moveQuantity * 1.5]))
+        ->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.quantity-exceeded'));
+
+    expect(phase2aReturnEffects($delivery))->toBe($before);
+})->with([
+    'dozens delivered for a product in units' => false,
+    'units delivered for a product in dozens' => true,
+]);
+
+it('bounds cumulative mixed-unit partial returns by the completed quantity', function (bool $productInDozens): void {
+    [$delivery, $product, $moveQuantity, $stockQuantity] = completedMixedUomPhase2aDelivery($productInDozens);
+    $sourceMove = $delivery->moves->sole();
+    $partialQuantity = $moveQuantity / 2;
+
+    $first = Inventory::createReturn($delivery, [$sourceMove->id => $partialQuantity]);
+    Inventory::completeTransfer($first);
+    expect((float) $first->refresh()->moves->sole()->product_qty)->toBe($stockQuantity / 2);
+    $before = phase2aReturnEffects($delivery);
+
+    expect(fn () => Inventory::createReturn($delivery, [$sourceMove->id => $moveQuantity]))
+        ->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.quantity-exceeded'));
+    expect(phase2aReturnEffects($delivery))->toBe($before);
+
+    $remaining = Inventory::createReturn($delivery, [$sourceMove->id => $partialQuantity]);
+    Inventory::completeTransfer($remaining);
+
+    expect((float) $sourceMove->returnedMoves()->sum('product_qty'))->toBe($stockQuantity)
+        ->and(InventoryHelper::onHand($product, $delivery->sourceLocation))->toBe($stockQuantity)
+        ->and(InventoryHelper::onHand($product, $delivery->destinationLocation))->toBe(0.0);
+    $before = phase2aReturnEffects($delivery);
+
+    expect(fn () => Inventory::createReturn($delivery, [$sourceMove->id => $partialQuantity]))
+        ->toThrow(InvalidArgumentException::class, __('inventories::system.inventory-manager.return.quantity-exceeded'));
+    expect(phase2aReturnEffects($delivery))->toBe($before);
+})->with([
+    'dozens delivered for a product in units' => false,
+    'units delivered for a product in dozens' => true,
+]);
+
+it('serializes competing returns against one completed move', function (): void {
+    if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {
+        test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
+    }
+
+    [$delivery] = completedPhase2aDelivery();
+    $moveId = $delivery->moves->sole()->id;
+    $database = DB::connection()->getDatabaseName();
+    expect($database)->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
+
+    while (DB::connection()->transactionLevel() > 0) {
+        DB::connection()->commit();
+    }
+
+    $directory = sys_get_temp_dir().'/return-race-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700);
+    $worker = <<<'PHP'
+require $argv[1].'/vendor/autoload.php';
+$app = require $argv[1].'/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+Illuminate\Support\Facades\Auth::loginUsingId((int) $argv[6]);
+$connection = Illuminate\Support\Facades\DB::connection();
+$pid = $connection->selectOne('SELECT pg_backend_pid() AS id')->id;
+file_put_contents($argv[2].'/pid-'.$argv[3], (string) $pid);
+if ($argv[3] === '1') {
+    Illuminate\Support\Facades\Event::listen(Webkul\Inventory\Events\OperationReturned::class, function () use ($argv): void {
+        touch($argv[2].'/holding');
+        $deadline = microtime(true) + 20;
+        while (! file_exists($argv[2].'/release')) {
+            if (microtime(true) > $deadline) { throw new RuntimeException('Release timeout'); }
+            usleep(10000);
+        }
+    });
+}
+try {
+    $operation = Webkul\Inventory\Models\Operation::findOrFail((int) $argv[4]);
+    Webkul\Inventory\Facades\Inventory::createReturn($operation, [(int) $argv[5] => 6]);
+    $result = 'accepted';
+} catch (Throwable $exception) {
+    $result = 'rejected';
+    $error = $exception->getMessage();
+}
+echo json_encode(['pid' => $pid, 'database' => $connection->getDatabaseName(), 'result' => $result, 'error' => $error ?? null]);
+PHP;
+    $waitFor = function (Closure $condition): void {
+        $deadline = microtime(true) + 20;
+        while (! $condition()) {
+            if (microtime(true) > $deadline) {
+                throw new RuntimeException('Return worker synchronization timed out.');
+            }
+            usleep(10000);
+        }
+    };
+    $processes = [];
+
+    try {
+        foreach ([1, 2] as $number) {
+            $process = new Process([PHP_BINARY, '-d', 'memory_limit=512M', '-r', $worker, base_path(), $directory, (string) $number, (string) $delivery->id, (string) $moveId, (string) auth()->id()], base_path(), [...$_ENV, 'APP_ENV' => 'testing', 'DB_CONNECTION' => 'pgsql', 'DB_HOST' => config('database.connections.pgsql.host'), 'DB_PORT' => (string) config('database.connections.pgsql.port'), 'DB_USERNAME' => config('database.connections.pgsql.username'), 'DB_PASSWORD' => config('database.connections.pgsql.password'), 'DB_DATABASE' => $database], timeout: 30);
+            $processes[] = $process;
+            $process->start();
+            $waitFor(fn () => file_exists($directory.'/pid-'.$number));
+            if ($number === 1) {
+                $waitFor(fn () => file_exists($directory.'/holding'));
+            }
+        }
+
+        $firstPid = (int) file_get_contents($directory.'/pid-1');
+        $secondPid = (int) file_get_contents($directory.'/pid-2');
+        $waitFor(fn () => (bool) DB::selectOne('SELECT ? = ANY(pg_blocking_pids(?)) AS blocked', [$firstPid, $secondPid])->blocked);
+        touch($directory.'/release');
+
+        $results = [];
+        foreach ($processes as $process) {
+            $process->wait();
+            expect($process->getExitCode())->toBe(0, $process->getErrorOutput());
+            $results[] = json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+        }
+
+        expect($firstPid)->not->toBe($secondPid)
+            ->and($results[0]['database'])->toBe($database)
+            ->and($results[1]['database'])->toBe($database)
+            ->and($results[0]['result'])->toBe('accepted')
+            ->and($results[1]['result'])->toBe('rejected')
+            ->and($results[1]['error'])->toContain('exceeds the completed quantity')
+            ->and($delivery->fresh()->returns()->count())->toBe(1);
+    } finally {
+        touch($directory.'/release');
+        foreach ($processes as $process) {
+            if ($process->isRunning()) {
+                $process->stop();
+            }
+        }
+        foreach (glob($directory.'/*') as $path) {
+            unlink($path);
+        }
+        rmdir($directory);
+    }
 });
 
 it('rolls back all database effects when a late return listener fails', function (): void {
@@ -297,6 +503,8 @@ it('serializes competing transfer completion and cancellation with one terminal 
         test()->markTestSkipped('Requires the opted-in disposable PostgreSQL runner.');
     }
 
+    $matching = str_ends_with($winner, '-repeat');
+    $winner = str_replace('-repeat', '', $winner);
     $warehouse = InventoryHelper::warehouse();
     $product = InventoryHelper::product();
     InventoryHelper::stockUp($product, $warehouse->lotStockLocation, 10);
@@ -353,7 +561,7 @@ PHP;
     };
     $processes = [];
     try {
-        foreach ([1 => $winner, 2 => $winner === 'complete' ? 'cancel' : 'complete'] as $number => $action) {
+        foreach ([1 => $winner, 2 => $matching ? $winner : ($winner === 'complete' ? 'cancel' : 'complete')] as $number => $action) {
             $process = new Process([PHP_BINARY, '-d', 'memory_limit=512M', '-r', $worker, base_path(), $directory, (string) $number, (string) $delivery->id, (string) auth()->id(), $action], base_path(), [...$_ENV, 'APP_ENV' => 'testing', 'DB_CONNECTION' => 'pgsql', 'DB_HOST' => config('database.connections.pgsql.host'), 'DB_PORT' => (string) config('database.connections.pgsql.port'), 'DB_USERNAME' => config('database.connections.pgsql.username'), 'DB_PASSWORD' => config('database.connections.pgsql.password'), 'DB_DATABASE' => $database], timeout: 30);
             $processes[] = $process;
             $process->start();
@@ -381,7 +589,8 @@ PHP;
         expect($contended)->toBeTrue()
             ->and($results[0]['pid'])->not->toBe($results[1]['pid'])
             ->and($results[0]['result'])->toBe('accepted')
-            ->and($results[1]['result'])->toBe('rejected')
+            ->and($results[1]['result'])->toBe($matching ? 'accepted' : 'rejected')
+            ->and($delivery->fresh()->terminalResult()->count())->toBe(1)
             ->and($delivery->fresh()->state)->toBe($winner === 'complete' ? OperationState::DONE : OperationState::CANCELED)
             ->and(InventoryHelper::onHand($product, $warehouse->lotStockLocation))->toBe($winner === 'complete' ? 0.0 : 10.0)
             ->and(InventoryHelper::onHand($product, $delivery->destinationLocation))->toBe($winner === 'complete' ? 10.0 : 0.0)
@@ -398,7 +607,7 @@ PHP;
         }
         rmdir($directory);
     }
-})->with(['completion wins' => 'complete', 'cancellation wins' => 'cancel']);
+})->with(['completion wins' => 'complete', 'cancellation wins' => 'cancel', 'matching completions' => 'complete-repeat', 'matching cancellations' => 'cancel-repeat']);
 
 it('surfaces a downstream product lock deadlock without partial receipt effects', function (): void {
     if (! config('testing.run_reconciliation_concurrency') || DB::connection()->getDriverName() !== 'pgsql') {

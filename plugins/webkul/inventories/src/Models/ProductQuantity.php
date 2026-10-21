@@ -29,6 +29,44 @@ class ProductQuantity extends Model
     use BelongsToCompany;
     use HasFactory;
 
+    private bool $savingWithStockLock = false;
+
+    public function save(array $options = []): bool
+    {
+        if ($this->savingWithStockLock) {
+            return parent::save($options);
+        }
+
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            Product::query()->withoutGlobalScopes()->whereKey($this->product_id)->lockForUpdate()->firstOrFail();
+
+            if ($this->exists) {
+                $current = static::query()->withoutGlobalScopes()->whereKey($this->id)->lockForUpdate()->first();
+
+                if ($current && float_compare((float) $this->getRawOriginal('quantity'), (float) $current->quantity, precisionRounding: $this->uom->rounding) !== 0) {
+                    throw new InvalidArgumentException(__('inventories::system.product-quantity.stale-count'));
+                }
+
+                if ($current?->inventory_quantity_set && ! $this->inventory_quantity_set
+                    && float_compare((float) $this->quantity, (float) $current->counted_quantity, precisionRounding: $this->uom->rounding) === 0) {
+                    $countBaseline = (float) $current->counted_quantity - (float) $current->inventory_diff_quantity;
+
+                    if (float_compare($countBaseline, (float) $current->quantity, precisionRounding: $this->uom->rounding) !== 0) {
+                        throw new InvalidArgumentException(__('inventories::system.product-quantity.stale-count'));
+                    }
+                }
+            }
+
+            $this->savingWithStockLock = true;
+
+            try {
+                return parent::save($options);
+            } finally {
+                $this->savingWithStockLock = false;
+            }
+        });
+    }
+
     protected $table = 'inventories_product_quantities';
 
     protected $fillable = [

@@ -18,7 +18,7 @@ class MoveReserver
     public function reserve(Collection $moves, mixed $forceQty = false): void
     {
         (new Move)->getConnection()->transaction(function () use ($moves, $forceQty): void {
-            $this->reserveLocked(Move::lockForStockMutation($moves), $forceQty);
+            $this->reserveLocked(Move::lockForStockMutation($moves, action: 'reserve', changes: ['force_qty' => $forceQty]), $forceQty);
         });
     }
 
@@ -78,7 +78,7 @@ class MoveReserver
 
     public function release(Collection $moves): bool
     {
-        return (new Move)->getConnection()->transaction(fn () => $this->releaseLocked(Move::lockForStockMutation($moves)));
+        return (new Move)->getConnection()->transaction(fn () => $this->releaseLocked(Move::lockForStockMutation($moves, action: 'release')));
     }
 
     protected function releaseLocked(Collection $moves): bool

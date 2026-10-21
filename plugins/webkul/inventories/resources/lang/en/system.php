@@ -2,6 +2,16 @@
 
 return [
     'inventory-manager' => [
+        'result-immutable'    => 'A saved transfer result cannot be changed or deleted.',
+        'replay-conflict'     => 'This transfer already finished with different instructions. Review its saved result before continuing.',
+        'legacy-terminal'     => 'This transfer is already closed but has no saved execution result. Ask Inventory to review it.',
+        'terminal-change'     => 'Completed or canceled stock records cannot be changed or deleted. Use a return or an approved correction.',
+        'canceled-completion' => 'Canceled stock movements cannot be completed. Create a new movement if stock still needs to move.',
+        'stock-not-ready'     => 'The reserved stock is no longer available at this loading location. Recount the goods and update the load before issuing stock.',
+        'invalid-counts'      => 'Check the counted quantities and reload the transfer. Counts must be finite, nonnegative quantities for its existing lines.',
+
+        'stale-operation' => 'This transfer changed while you were working. Reload it and try again.',
+
         'check-availability' => [
             'no-moves' => 'Nothing to check the availability for.',
         ],
@@ -27,7 +37,11 @@ return [
         ],
 
         'return' => [
-            'origin' => 'Return of :operation_name',
+            'origin'               => 'Return of :operation_name',
+            'completed-only'       => 'Only a completed transfer can be returned.',
+            'missing-source-moves' => 'A return requires quantities for existing source moves.',
+            'positive-quantity'    => 'Return quantities must be positive.',
+            'quantity-exceeded'    => 'The return quantity exceeds the completed quantity available to return.',
         ],
     ],
 
@@ -42,6 +56,13 @@ return [
         'removal-strategy-not-implemented' => 'Removal strategy :strategy not implemented.',
         'unreserve-more-than-stock'        => 'It is not possible to unreserve more products of :name than you have in stock.',
         'reservation-out-of-bounds'        => 'The reservation exceeds available stock or releases more than is reserved.',
+        'stale-count'                      => 'Stock changed after this count was entered. Recount before applying the adjustment.',
+        'duplicate-identity'               => 'A quantity already exists for this company, product, location, lot, package, and stock owner combination.',
+    ],
+
+    'scrap' => [
+        'done-update' => 'Done scraps cannot be updated.',
+        'done-delete' => 'Done scraps cannot be deleted.',
     ],
 
     'product' => [

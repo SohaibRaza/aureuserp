@@ -110,6 +110,7 @@ class InventoryServiceProvider extends PackageServiceProvider
                 '2026_07_21_130000_provision_company_virtual_locations',
                 '2026_08_03_130000_seed_inventories_sequences',
                 '2026_09_24_010000_enforce_product_quantity_identity',
+                '2026_10_15_220000_create_operation_results_table',
             ])
             ->runsMigrations()
             ->hasSettings([

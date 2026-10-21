@@ -30,6 +30,15 @@ class MoveMerger
 
     public function merge(Collection $moves, ?Collection $mergeInto = null): Collection
     {
+        return (new Move)->getConnection()->transaction(function () use ($moves, $mergeInto): Collection {
+            Move::lockForStockMutation($moves->merge($mergeInto ?? collect())->unique('id'), action: 'merge', preservePendingChanges: true);
+
+            return $this->mergeLocked($moves, $mergeInto);
+        });
+    }
+
+    protected function mergeLocked(Collection $moves, ?Collection $mergeInto = null): Collection
+    {
         $moves->each(fn (Move $move) => $move->load('operation'));
 
         $returnMoves = $moves->filter(

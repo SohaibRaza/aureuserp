@@ -140,7 +140,7 @@ class DeliveryController extends OperationController
     #[Endpoint('Validate delivery', 'Validate delivery and complete stock moves')]
     #[UrlParam('id', 'integer', 'The delivery ID', required: true, example: 1)]
     #[ResponseFromApiResource(DeliveryResource::class, Delivery::class, additional: ['message' => 'Delivery validated successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be validated.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Delivery not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function validateTransfer(string $id)
@@ -160,7 +160,7 @@ class DeliveryController extends OperationController
     #[Endpoint('Cancel delivery', 'Cancel delivery and related moves')]
     #[UrlParam('id', 'integer', 'The delivery ID', required: true, example: 1)]
     #[ResponseFromApiResource(DeliveryResource::class, Delivery::class, additional: ['message' => 'Delivery canceled successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be canceled.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Delivery not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function cancelTransfer(string $id)

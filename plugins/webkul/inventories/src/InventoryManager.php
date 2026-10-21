@@ -41,9 +41,9 @@ class InventoryManager
         return $this->transfers->reserve($operation);
     }
 
-    public function completeTransfer(Operation $operation, bool $cancelBackorder = false): Operation
+    public function completeTransfer(Operation $operation, bool $cancelBackorder = false, ?array $countedLineQuantities = null): Operation
     {
-        return $this->transfers->complete($operation, $cancelBackorder);
+        return $this->transfers->complete($operation, $cancelBackorder, $countedLineQuantities);
     }
 
     public function cancelTransfer(Operation $operation): Operation

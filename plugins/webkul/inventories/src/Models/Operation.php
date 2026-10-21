@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 use Webkul\Chatter\Traits\HasChatter;
 use Webkul\Chatter\Traits\HasLogActivity;
@@ -23,6 +25,7 @@ use Webkul\Inventory\Enums\ProcureMethod;
 use Webkul\Inventory\Facades\Inventory as InventoryFacade;
 use Webkul\Inventory\Filament\Clusters\Operations\Resources\OperationResource;
 use Webkul\Inventory\Models\Concerns\ChecksCrossCompanyTransfer;
+use Webkul\Inventory\Support\StockMutationGuard;
 use Webkul\Partner\Models\Partner;
 use Webkul\Purchase\Models\Order as PurchaseOrder;
 use Webkul\Sale\Models\Order as SaleOrder;
@@ -43,6 +46,75 @@ class Operation extends Model
     public const ACTIVITY_PLAN_PLUGIN = 'inventories';
 
     protected $table = 'inventories_operations';
+
+    public function terminalResult(): HasOne
+    {
+        return $this->hasOne(OperationResult::class, 'operation_id');
+    }
+
+    public function save(array $options = []): bool
+    {
+        if (! $this->exists) {
+            return parent::save($options);
+        }
+
+        $changes = $this->getDirty();
+        $stockFieldsChanged = $this->isDirty([
+            'company_id', 'operation_type_id', 'partner_id', 'owner_id', 'source_location_id',
+            'destination_location_id', 'state', 'back_order_id', 'return_id', 'closed_at',
+        ]);
+        $moves = $this->moves()->get();
+        if (! $stockFieldsChanged
+            && ! app(StockMutationGuard::class)->hasApplicablePreconditions('operation.update', collect([$this]), $moves, $changes)) {
+            return parent::save($options);
+        }
+
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            $changes = $this->getDirty();
+            Move::lockForStockMutation(
+                $this->moves()->get(),
+                additionalOperationIds: [$this->id],
+                action: 'operation.update',
+                changes: $changes,
+                requireCompleteOperations: true,
+            );
+            $locked = static::query()->whereKey($this->id)->lockForUpdate()->firstOrFail();
+            $changes = array_filter($changes, fn ($value, $field) => $locked->getRawOriginal($field) != $value, ARRAY_FILTER_USE_BOTH);
+            $this->setRawAttributes($locked->getAttributes(), true);
+            $this->unsetRelations();
+            if (array_key_exists('closed_at', $changes) && $this->terminalResult()->exists()) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+            if (in_array($this->state, [OperationState::DONE, OperationState::CANCELED], true)
+                && array_intersect(array_keys($changes), ['company_id', 'operation_type_id', 'partner_id', 'owner_id', 'source_location_id', 'destination_location_id', 'state', 'back_order_id', 'return_id'])) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+
+            foreach ($changes as $field => $value) {
+                $this->setAttribute($field, $value);
+            }
+
+            return parent::save($options);
+        });
+    }
+
+    public function delete(): ?bool
+    {
+        return $this->getConnection()->transaction(function (): ?bool {
+            Move::lockForStockMutation(
+                $this->moves()->get(),
+                additionalOperationIds: [$this->id],
+                action: 'operation.delete',
+                requireCompleteOperations: true,
+            );
+
+            if (in_array($this->fresh()->state, [OperationState::DONE, OperationState::CANCELED], true)) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+
+            return parent::delete();
+        });
+    }
 
     protected $fillable = [
         'name',

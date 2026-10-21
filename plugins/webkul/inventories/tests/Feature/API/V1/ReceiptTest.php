@@ -197,7 +197,7 @@ it('returns validate validation error for done receipt', function () {
 
     $this->postJson(receiptRoute('validate', $receipt->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be validated.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns cancel validation error for canceled receipt', function () {
@@ -207,7 +207,7 @@ it('returns cancel validation error for canceled receipt', function () {
 
     $this->postJson(receiptRoute('cancel', $receipt->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be canceled.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns return validation error when receipt is not done', function () {

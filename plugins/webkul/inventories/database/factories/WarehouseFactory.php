@@ -3,6 +3,7 @@
 namespace Webkul\Inventory\Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
 use Webkul\Inventory\Enums\DeliveryStep;
 use Webkul\Inventory\Enums\ReceptionStep;
 use Webkul\Inventory\Models\Warehouse;
@@ -21,9 +22,10 @@ class WarehouseFactory extends Factory
 
     public function definition(): array
     {
+        // Faker uniqueness is process-local; committed concurrency fixtures outlive its registry.
         return [
-            'name'            => fake()->unique()->company(),
-            'code'            => strtoupper(fake()->unique()->lexify('WH???')),
+            'name'            => fake()->company().' '.Str::uuid(),
+            'code'            => 'WH'.Str::uuid(),
             'sort'            => 1,
             'reception_steps' => ReceptionStep::ONE_STEP,
             'delivery_steps'  => DeliveryStep::ONE_STEP,

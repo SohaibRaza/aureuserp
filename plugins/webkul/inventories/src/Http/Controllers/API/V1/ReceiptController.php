@@ -140,7 +140,7 @@ class ReceiptController extends OperationController
     #[Endpoint('Validate receipt', 'Validate receipt and complete stock moves')]
     #[UrlParam('id', 'integer', 'The receipt ID', required: true, example: 1)]
     #[ResponseFromApiResource(ReceiptResource::class, Receipt::class, additional: ['message' => 'Receipt validated successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be validated.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Receipt not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function validateTransfer(string $id)
@@ -160,7 +160,7 @@ class ReceiptController extends OperationController
     #[Endpoint('Cancel receipt', 'Cancel receipt and related moves')]
     #[UrlParam('id', 'integer', 'The receipt ID', required: true, example: 1)]
     #[ResponseFromApiResource(ReceiptResource::class, Receipt::class, additional: ['message' => 'Receipt canceled successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be canceled.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Receipt not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function cancelTransfer(string $id)

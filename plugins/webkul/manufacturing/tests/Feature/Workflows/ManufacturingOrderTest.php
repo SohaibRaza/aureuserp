@@ -85,6 +85,52 @@ it('consumes components and produces the finished product when the order is mark
         ->and(InventoryHelper::onHand($this->componentB, $this->stock))->toBe(0.0);
 });
 
+it('does not complete the same manufacturing order twice', function () {
+    $bom = ManufacturingHelper::bom($this->finished, [[$this->componentA, 2]]);
+
+    InventoryHelper::stockUp($this->componentA, $this->stock, 20);
+
+    $order = ManufacturingHelper::order($this->warehouse, $this->finished, $bom, 5);
+
+    ManufacturingHelper::confirm($order);
+    ManufacturingHelper::produce($order, 5);
+
+    expect(fn () => Manufacturing::doneManufacturingOrder($order))
+        ->toThrow(DomainException::class, __('manufacturing::system.manufacturing-manager.complete-order.only-active'));
+
+    expect(InventoryHelper::onHand($this->finished, $this->stock))->toBe(5.0)
+        ->and(InventoryHelper::onHand($this->componentA, $this->stock))->toBe(10.0);
+});
+
+it('uses the translated message when refusing to complete an inactive manufacturing order', function () {
+    $bom = ManufacturingHelper::bom($this->finished, [[$this->componentA, 2]]);
+
+    InventoryHelper::stockUp($this->componentA, $this->stock, 20);
+
+    $order = ManufacturingHelper::order($this->warehouse, $this->finished, $bom, 5);
+
+    ManufacturingHelper::confirm($order);
+    ManufacturingHelper::produce($order, 5);
+
+    $translationKey = 'manufacturing::system.manufacturing-manager.complete-order.only-active';
+    $originalMessage = __($translationKey);
+    $localizedMessage = 'Test translation for inactive order completion.';
+    $translator = app('translator');
+
+    $translator->addLines([
+        'system.manufacturing-manager.complete-order.only-active' => $localizedMessage,
+    ], 'en', 'manufacturing');
+
+    try {
+        expect(fn () => Manufacturing::doneManufacturingOrder($order))
+            ->toThrow(DomainException::class, $localizedMessage);
+    } finally {
+        $translator->addLines([
+            'system.manufacturing-manager.complete-order.only-active' => $originalMessage,
+        ], 'en', 'manufacturing');
+    }
+});
+
 it('builds a manufacturing order with manually added components and no bill of materials', function () {
     InventoryHelper::stockUp($this->componentA, $this->stock, 4);
 

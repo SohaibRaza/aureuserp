@@ -98,15 +98,17 @@ class QuantityController extends Controller
         $data = $this->preparePayload($request->validated());
 
         $existingQuantity = ProductQuantity::query()
+            ->where('company_id', $data['company_id'])
             ->where('location_id', $data['location_id'])
             ->where('product_id', $data['product_id'])
             ->where('package_id', $data['package_id'] ?? null)
             ->where('lot_id', $data['lot_id'] ?? null)
+            ->where('partner_id', $data['partner_id'] ?? null)
             ->exists();
 
         if ($existingQuantity) {
             return response()->json([
-                'message' => 'A quantity already exists for this product, location, lot, and package combination.',
+                'message' => __('inventories::system.product-quantity.duplicate-identity'),
             ], 422);
         }
 
@@ -251,8 +253,9 @@ class QuantityController extends Controller
         $product = Product::query()->findOrFail($data['product_id']);
 
         $data['location_id'] = $data['location_id'] ?? Warehouse::query()->first()?->lot_stock_location_id;
+        $location = Location::query()->findOrFail($data['location_id']);
         $data['creator_id'] = Auth::id();
-        $data['company_id'] = $data['company_id'] ?? $product->company_id;
+        $data['company_id'] = $location->company_id;
         $data['inventory_quantity_set'] = true;
         $data['inventory_diff_quantity'] = $data['counted_quantity'];
         $data['incoming_at'] = now();

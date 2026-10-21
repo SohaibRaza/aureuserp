@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Webkul\Inventory\Database\Factories\MoveFactory;
 use Webkul\Inventory\Enums\GroupPropagation;
 use Webkul\Inventory\Enums\LocationType;
@@ -21,6 +22,7 @@ use Webkul\Inventory\Enums\ProductTracking;
 use Webkul\Inventory\Enums\RuleAction;
 use Webkul\Inventory\Facades\Inventory as InventoryFacade;
 use Webkul\Inventory\Support\ProcurementOptions;
+use Webkul\Inventory\Support\StockMutationGuard;
 use Webkul\Inventory\Support\StockScope;
 use Webkul\Partner\Models\Partner;
 use Webkul\Purchase\Models\OrderLine as PurchaseOrderLine;
@@ -36,6 +38,14 @@ class Move extends Model
     use HasFactory;
 
     protected $table = 'inventories_moves';
+
+    protected const HISTORY_FIELDS = [
+        'quantity', 'product_qty', 'product_uom_qty', 'product_id', 'uom_id',
+        'source_location_id', 'destination_location_id', 'operation_id', 'operation_type_id',
+        'partner_id', 'company_id', 'state', 'date', 'is_picked', 'is_refund', 'is_inventory',
+        'origin_returned_move_id', 'sale_order_line_id', 'purchase_order_line_id',
+        'product_packaging_id', 'restrict_partner_id',
+    ];
 
     protected $fillable = [
         'name',
@@ -104,6 +114,63 @@ class Move extends Model
     protected bool $isAdditionalCandidate = false;
 
     protected bool $skipUnreserveOnQuantityChange = false;
+
+    public function save(array $options = []): bool
+    {
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            $guard = app(StockMutationGuard::class);
+            $changes = $this->getDirty();
+            if (! $this->isDirty(self::HISTORY_FIELDS)
+                && ! $guard->hasApplicablePreconditions('move.update', collect(), collect([$this]), $changes)) {
+                return parent::save($options);
+            }
+
+            $original = $this->getRawOriginal();
+            $existing = $this->exists;
+
+            static::lockForStockMutation(
+                $existing ? collect([$this]) : collect(),
+                array_values(array_filter([$this->product_id, $original['product_id'] ?? null])),
+                array_values(array_filter([$this->operation_id, $original['operation_id'] ?? null])),
+                $existing ? 'move.update' : 'move.create',
+                $changes,
+            );
+
+            $targetOperationId = array_key_exists('operation_id', $changes) ? $changes['operation_id'] : $this->operation_id;
+            if ((! $existing || array_key_exists('operation_id', $changes)) && $targetOperationId
+                && OperationResult::query()->where('operation_id', $targetOperationId)->exists()) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+
+            if ($existing) {
+                $changes = array_filter($changes, fn ($value, $field) => $this->getRawOriginal($field) != $value, ARRAY_FILTER_USE_BOTH);
+                if (in_array($this->state, [MoveState::DONE, MoveState::CANCELED], true)
+                    && array_intersect(array_keys($changes), self::HISTORY_FIELDS)) {
+                    throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+                }
+                foreach ($changes as $field => $value) {
+                    $this->setAttribute($field, $value);
+                }
+            }
+
+            return parent::save($options);
+        });
+    }
+
+    public function delete(): ?bool
+    {
+        return $this->getConnection()->transaction(function (): ?bool {
+            static::lockForStockMutation(collect([$this]), action: 'move.delete');
+            // Unissued merges discard temporary canceled rows; saved operation results preserve cancellation history.
+            if ($this->state === MoveState::DONE
+                || ($this->state === MoveState::CANCELED && $this->operation_id
+                    && OperationResult::query()->where('operation_id', $this->operation_id)->exists())) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+            }
+
+            return parent::delete();
+        });
+    }
 
     public static function markNextAsAdditional(): void
     {
@@ -958,10 +1025,20 @@ class Move extends Model
     /**
      * @param  Collection<int, self>  $moves
      * @param  array<int, int>  $additionalProductIds
+     * @param  array<int, int>  $additionalOperationIds
+     * @param  array<string, mixed>  $changes
      * @return Collection<int, self>
      */
-    public static function lockForStockMutation(Collection $moves, array $additionalProductIds = []): Collection
-    {
+    public static function lockForStockMutation(
+        Collection $moves,
+        array $additionalProductIds = [],
+        array $additionalOperationIds = [],
+        string $action = 'move.mutate',
+        array $changes = [],
+        bool $preservePendingChanges = false,
+        bool $requireCompleteOperations = false,
+        bool $validateMutation = true,
+    ): Collection {
         $connection = (new static)->getConnection();
 
         if ($connection->transactionLevel() === 0) {
@@ -972,29 +1049,62 @@ class Move extends Model
             throw new \InvalidArgumentException('Stock movements must be persisted on the Inventory connection.');
         }
 
-        $operationIds = static::query()->whereKey($moves->pluck('id'))->pluck('operation_id')->filter()->unique();
+        $pendingChanges = $preservePendingChanges
+            ? $moves->mapWithKeys(fn (self $move) => [$move->id => $move->getDirty()])
+            : collect();
+        $operationIds = static::query()->whereKey($moves->pluck('id'))->pluck('operation_id')
+            ->merge($additionalOperationIds)
+            ->merge($preservePendingChanges ? $moves->pluck('operation_id') : [])
+            ->filter()->unique();
         $productIds = static::query()
             ->where(fn ($query) => $query->whereKey($moves->pluck('id'))->orWhereIn('operation_id', $operationIds))
-            ->pluck('product_id')->merge($additionalProductIds)->filter()->unique();
+            ->pluck('product_id')->merge($additionalProductIds)
+            ->merge($preservePendingChanges ? $moves->pluck('product_id') : [])
+            ->filter()->unique();
 
         // ponytail: Product locks serialize locations; use finer balance locks only after measuring contention.
         Product::withTrashed()->whereKey($productIds)->orderBy('id')->lockForUpdate()->get();
-        Operation::query()->whereKey($operationIds)->orderBy('id')->lockForUpdate()->get();
+        $operations = Operation::query()->whereKey($operationIds)->orderBy('id')->lockForUpdate()->get();
 
         $locked = static::query()->whereKey($moves->pluck('id'))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
 
         if ($locked->count() !== $moves->pluck('id')->unique()->count()
             || $locked->contains(fn (self $move) => ! $productIds->contains($move->product_id)
                 || ($move->operation_id && ! $operationIds->contains($move->operation_id)))) {
-            throw new \RuntimeException('Stock movements changed while acquiring locks. Reload before retrying.');
+            throw new \RuntimeException(__('inventories::system.inventory-manager.stale-operation'));
         }
 
-        return $moves->map(function (self $move) use ($locked): self {
+        if ($requireCompleteOperations
+            && static::query()->whereIn('operation_id', $operationIds)->orderBy('id')->pluck('id')->all()
+                !== $locked->pluck('id')->sort()->values()->all()
+        ) {
+            throw new \RuntimeException(__('inventories::system.inventory-manager.stale-operation'));
+        }
+
+        if ($preservePendingChanges) {
+            $changes['proposed_moves'] = $pendingChanges->all();
+        }
+
+        if ($validateMutation) {
+            app(StockMutationGuard::class)->assertAllowed($action, $operations, $locked->values(), $changes);
+        }
+
+        $refreshed = $moves->map(function (self $move) use ($locked): self {
             $move->setRawAttributes($locked[$move->id]->getAttributes(), true);
             $move->unsetRelations();
 
             return $move;
         });
+
+        if ($preservePendingChanges) {
+            $refreshed->each(function (self $move) use ($pendingChanges): void {
+                foreach ($pendingChanges->get($move->id, []) as $field => $value) {
+                    $move->setAttribute($field, $value);
+                }
+            });
+        }
+
+        return $refreshed;
     }
 
     public function reserveFrom(

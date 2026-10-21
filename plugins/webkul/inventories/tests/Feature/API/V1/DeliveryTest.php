@@ -92,8 +92,9 @@ it('lists deliveries for authorized users', function () {
 
     $delivery = createDeliveryRecord();
 
-    $response = $this->getJson(deliveryRoute('index'))
-        ->assertOk();
+    $response = $this->getJson(deliveryRoute('index').'?'.http_build_query([
+        'filter' => ['id' => $delivery->id],
+    ]))->assertOk();
 
     expect(collect($response->json('data'))->pluck('id'))->toContain($delivery->id);
 });
@@ -185,7 +186,7 @@ it('returns validate validation error for done delivery', function () {
 
     $this->postJson(deliveryRoute('validate', $delivery->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be validated.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns cancel validation error for canceled delivery', function () {
@@ -195,7 +196,7 @@ it('returns cancel validation error for canceled delivery', function () {
 
     $this->postJson(deliveryRoute('cancel', $delivery->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be canceled.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns return validation error when delivery is not done', function () {
@@ -216,7 +217,7 @@ it('leaves no orphan when the return API has no quantity-map contract', function
 
     $this->postJson(deliveryRoute('return', $delivery->id))
         ->assertServerError()
-        ->assertJsonPath('message', 'A return requires quantities for existing source moves.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.return.missing-source-moves'));
 
     expect(Operation::query()->count())->toBe($operationCount);
 });

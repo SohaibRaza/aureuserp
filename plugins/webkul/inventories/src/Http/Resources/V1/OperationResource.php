@@ -19,6 +19,7 @@ class OperationResource extends JsonResource
     {
         return [
             'id'                   => $this->id,
+            'execution_result'     => $this->whenLoaded('terminalResult', fn () => $this->terminalResult?->result),
             'name'                 => $this->name,
             'origin'               => $this->origin,
             'move_type'            => $this->move_type?->value,

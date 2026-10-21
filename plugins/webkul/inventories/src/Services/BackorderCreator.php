@@ -15,6 +15,13 @@ class BackorderCreator
 {
     public function splitShortMoves(Collection $moves): Collection
     {
+        return (new Move)->getConnection()->transaction(
+            fn (): Collection => $this->splitLockedMoves(Move::lockForStockMutation($moves, action: 'backorder.split', preservePendingChanges: true))
+        );
+    }
+
+    protected function splitLockedMoves(Collection $moves): Collection
+    {
         $splitAttributes = collect();
 
         foreach ($moves as $move) {
@@ -59,6 +66,27 @@ class BackorderCreator
     }
 
     public function createFor(Operation $operation, ?Collection $moves = null): ?Operation
+    {
+        return $operation->getConnection()->transaction(function () use ($operation, $moves): ?Operation {
+            $lockedMoves = Move::lockForStockMutation(
+                $operation->moves()->get(),
+                additionalOperationIds: [$operation->id],
+                action: 'backorder.create',
+                requireCompleteOperations: true,
+            );
+            $lockedOperation = $operation->newQuery()->whereKey($operation->id)->lockForUpdate()->firstOrFail();
+            $operation->setRawAttributes($lockedOperation->getAttributes(), true);
+            $operation->unsetRelations();
+
+            if ($moves !== null) {
+                $moves = $lockedMoves->whereIn('id', $moves->pluck('id'));
+            }
+
+            return $this->createForLockedOperation($operation, $moves);
+        });
+    }
+
+    protected function createForLockedOperation(Operation $operation, ?Collection $moves = null): ?Operation
     {
         $carriedOver = $moves
             ? $moves->filter(fn (Move $move) => $move->operation_id === $operation->id)

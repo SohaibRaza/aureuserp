@@ -24,7 +24,7 @@ class UOMObserver
             return;
         }
 
-        if (! $uom->isDirty(['factor', 'category_id'])) {
+        if (! $uom->isDirty(['factor', 'category_id', 'rounding'])) {
             return;
         }
 
@@ -33,7 +33,7 @@ class UOMObserver
         }
 
         throw ValidationException::withMessages([
-            "data.uoms.record-{$uom->id}.ratio" => __('inventories::observers/uom.ratio-change'),
+            "data.uoms.record-{$uom->id}.".($uom->isDirty('rounding') ? 'rounding' : 'ratio') => __('inventories::observers/uom.'.($uom->isDirty('rounding') ? 'rounding-change' : 'ratio-change')),
         ]);
     }
 

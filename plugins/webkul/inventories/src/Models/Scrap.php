@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Webkul\Chatter\Traits\HasChatter;
 use Webkul\Chatter\Traits\HasLogActivity;
 use Webkul\Field\Traits\HasCustomFields;
@@ -16,6 +17,7 @@ use Webkul\Inventory\Database\Factories\ScrapFactory;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\ScrapState;
 use Webkul\Inventory\Models\Concerns\ChecksCrossCompanyTransfer;
+use Webkul\Inventory\Support\CrossCompanyTransferGuard;
 use Webkul\Partner\Models\Partner;
 use Webkul\Security\Models\User;
 use Webkul\Support\Models\Company;
@@ -32,6 +34,47 @@ class Scrap extends Model
     public const ACTIVITY_PLAN_PLUGIN = 'inventories';
 
     protected $table = 'inventories_scraps';
+
+    public function save(array $options = []): bool
+    {
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            $this->lockDraftMutation();
+
+            return parent::save($options);
+        });
+    }
+
+    public function delete(): ?bool
+    {
+        return $this->getConnection()->transaction(function (): ?bool {
+            $this->lockDraftMutation(deleting: true);
+
+            return parent::delete();
+        });
+    }
+
+    protected function lockDraftMutation(bool $deleting = false): void
+    {
+        if (! $this->exists) {
+            return;
+        }
+
+        // Validation locks products before the scrap; keep that order for edits and deletion.
+        Product::on($this->getConnectionName())
+            ->withoutGlobalScopes()
+            ->whereKey(array_filter([$this->product_id, $this->getRawOriginal('product_id')]))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $current = $this->newQueryWithoutScopes()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+
+        if ($current->state === ScrapState::DONE && ($deleting || $this->isDirty())) {
+            throw ValidationException::withMessages([
+                'state' => __($deleting ? 'inventories::system.scrap.done-delete' : 'inventories::system.scrap.done-update'),
+            ]);
+        }
+    }
 
     protected $fillable = [
         'name',
@@ -182,59 +225,94 @@ class Scrap extends Model
         });
     }
 
-    public function validate()
+    public function validate(): bool
     {
-        $baseQty = $this->uom && $this->product?->uom
-            ? $this->uom->computeQuantity($this->qty, $this->product->uom, false)
-            : $this->qty;
+        return $this->getConnection()->transaction(function (): bool {
+            Product::query()->withoutGlobalScopes()->whereKey($this->product_id)->lockForUpdate()->firstOrFail();
 
-        $locationQuantity = ProductQuantity::where('location_id', $this->source_location_id)
-            ->where('product_id', $this->product_id)
-            ->where('package_id', $this->package_id ?? null)
-            ->where('lot_id', $this->lot_id ?? null)
-            ->first();
+            $scrap = static::query()->whereKey($this->id)->lockForUpdate()->firstOrFail();
 
-        if (! $locationQuantity || $locationQuantity->quantity < $baseQty) {
-            return false;
-        }
+            if ($scrap->state !== ScrapState::DRAFT || $scrap->product_id !== $this->product_id) {
+                return false;
+            }
 
-        $locationQuantity->update([
-            'quantity' => $locationQuantity->quantity - $baseQty,
-        ]);
+            CrossCompanyTransferGuard::assert($scrap->source_location_id, $scrap->destination_location_id);
 
-        $destinationQuantity = ProductQuantity::where('product_id', $this->product_id)
-            ->where('location_id', $this->destination_location_id)
-            ->first();
+            if ($scrap->sourceLocation?->company_id !== $scrap->company_id
+                || $scrap->destinationLocation?->company_id !== $scrap->company_id) {
+                return false;
+            }
 
-        if ($destinationQuantity) {
-            $destinationQuantity->update([
-                'quantity' => $destinationQuantity->quantity + $baseQty,
+            $this->setRawAttributes($scrap->getAttributes(), true);
+            $this->unsetRelations();
+
+            $baseQty = $this->uom && $this->product?->uom
+                ? $this->uom->computeQuantity($this->qty, $this->product->uom, false)
+                : $this->qty;
+
+            if (float_compare((float) $baseQty, 0.0, precisionRounding: $this->product->uom->rounding) <= 0) {
+                return false;
+            }
+
+            $locationQuantity = ProductQuantity::where('company_id', $this->company_id)
+                ->where('location_id', $this->source_location_id)
+                ->where('product_id', $this->product_id)
+                ->where('package_id', $this->package_id ?? null)
+                ->where('lot_id', $this->lot_id ?? null)
+                ->where('partner_id', $this->partner_id ?? null)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $locationQuantity || float_compare($locationQuantity->available_quantity, (float) $baseQty, precisionRounding: $this->product->uom->rounding) < 0) {
+                return false;
+            }
+
+            $locationQuantity->update([
+                'quantity' => $locationQuantity->quantity - $baseQty,
             ]);
-        } else {
-            ProductQuantity::create([
-                'product_id'  => $this->product_id,
-                'location_id' => $this->destination_location_id,
-                'quantity'    => $baseQty,
-                'company_id'  => $this->destinationLocation->company_id,
+
+            $destinationQuantity = ProductQuantity::where('company_id', $this->company_id)
+                ->where('product_id', $this->product_id)
+                ->where('location_id', $this->destination_location_id)
+                ->where('lot_id', $this->lot_id ?? null)
+                ->where('package_id', $this->package_id ?? null)
+                ->where('partner_id', $this->partner_id ?? null)
+                ->lockForUpdate()
+                ->first();
+
+            if ($destinationQuantity) {
+                $destinationQuantity->update([
+                    'quantity' => $destinationQuantity->quantity + $baseQty,
+                ]);
+            } else {
+                ProductQuantity::create([
+                    'product_id'  => $this->product_id,
+                    'location_id' => $this->destination_location_id,
+                    'lot_id'      => $this->lot_id,
+                    'package_id'  => $this->package_id,
+                    'partner_id'  => $this->partner_id,
+                    'quantity'    => $baseQty,
+                    'company_id'  => $this->company_id,
+                ]);
+            }
+
+            $this->update([
+                'state'     => ScrapState::DONE,
+                'closed_at' => now(),
             ]);
-        }
 
-        $this->update([
-            'state'     => ScrapState::DONE,
-            'closed_at' => now(),
-        ]);
+            $moveValues = $this->getInventoryMoveValues();
 
-        $moveValues = $this->getInventoryMoveValues();
+            $move = Move::create($moveValues);
 
-        $move = Move::create($moveValues);
+            foreach ($moveValues['lines'] as $lineValues) {
+                MoveLine::create(array_merge($lineValues, [
+                    'move_id' => $move->id,
+                ]));
+            }
 
-        foreach ($moveValues['lines'] as $lineValues) {
-            MoveLine::create(array_merge($lineValues, [
-                'move_id' => $move->id,
-            ]));
-        }
-
-        return true;
+            return true;
+        });
     }
 
     public function getInventoryMoveValues()
@@ -246,6 +324,7 @@ class Scrap extends Model
             'product_uom_qty'         => $this->uom->computeQuantity($this->qty, $this->product->uom),
             'is_picked'               => true,
             'product_id'              => $this->product_id,
+            'partner_id'              => $this->partner_id,
             'uom_id'                  => $this->uom_id,
             'source_location_id'      => $this->source_location_id,
             'destination_location_id' => $this->destination_location_id,
@@ -256,6 +335,7 @@ class Scrap extends Model
                 'qty'                     => $this->qty,
                 'uom_qty'                 => $this->uom->computeQuantity($this->qty, $this->product->uom),
                 'product_id'              => $this->product_id,
+                'partner_id'              => $this->partner_id,
                 'uom_id'                  => $this->uom_id,
                 'source_location_id'      => $this->source_location_id,
                 'destination_location_id' => $this->destination_location_id,

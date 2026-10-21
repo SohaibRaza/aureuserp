@@ -7,6 +7,7 @@ use Webkul\Inventory\Models\Lot;
 use Webkul\Inventory\Models\Package;
 use Webkul\Inventory\Models\Product;
 use Webkul\Inventory\Models\ProductQuantity;
+use Webkul\Partner\Models\Partner;
 use Webkul\Security\Enums\PermissionType;
 use Webkul\Security\Models\User;
 
@@ -165,6 +166,37 @@ it('creates a quantity for a valid variant payload', function () {
     $this->postJson(inventoryQuantityRoute('store'), $payload)
         ->assertCreated()
         ->assertJsonPath('message', 'Quantity created successfully.');
+});
+
+it('allows separately owned stock in the same company, product and location', function (): void {
+    actingAsInventoryQuantityApiUser(['create_inventory_quantity']);
+
+    $product = Product::factory()->create([
+        'is_configurable' => false,
+        'is_storable'     => true,
+        'tracking'        => ProductTracking::QTY,
+    ]);
+    $location = Location::factory()->create(['type' => LocationType::INTERNAL]);
+    $firstOwner = Partner::factory()->create();
+    $secondOwner = Partner::factory()->create();
+
+    ProductQuantity::factory()->create([
+        'company_id'  => $location->company_id,
+        'product_id'  => $product->id,
+        'location_id' => $location->id,
+        'partner_id'  => $firstOwner->id,
+    ]);
+
+    $this->postJson(inventoryQuantityRoute('store'), inventoryQuantityPayload($product, $location, [
+        'partner_id' => $secondOwner->id,
+    ]))
+        ->assertCreated();
+
+    expect(ProductQuantity::query()
+        ->where('product_id', $product->id)
+        ->where('location_id', $location->id)
+        ->whereIn('partner_id', [$firstOwner->id, $secondOwner->id])
+        ->count())->toBe(2);
 });
 
 it('rejects configurable products and requires variant products', function () {

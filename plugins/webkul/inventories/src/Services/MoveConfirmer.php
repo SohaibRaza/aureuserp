@@ -17,6 +17,21 @@ class MoveConfirmer
             return collect();
         }
 
+        return (new Move)->getConnection()->transaction(
+            fn (): Collection => $this->confirmLocked(
+                Move::lockForStockMutation($moves, action: 'confirm', preservePendingChanges: true),
+                $merge,
+                $mergeInto,
+            )
+        );
+    }
+
+    protected function confirmLocked(Collection $moves, bool $merge = true, ?Collection $mergeInto = null): Collection
+    {
+        if ($moves->isEmpty()) {
+            return collect();
+        }
+
         $pendingOperationGroups = $moves
             ->filter(fn (Move $move) => $move->state == MoveState::DRAFT && $move->needsOperation())
             ->groupBy(fn (Move $move) => implode('_', $move->operationGroupingKey()));

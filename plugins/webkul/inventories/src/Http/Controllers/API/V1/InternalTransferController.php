@@ -140,7 +140,7 @@ class InternalTransferController extends OperationController
     #[Endpoint('Validate internal transfer', 'Validate internal transfer and complete stock moves')]
     #[UrlParam('id', 'integer', 'The internal transfer ID', required: true, example: 1)]
     #[ResponseFromApiResource(InternalTransferResource::class, InternalTransfer::class, additional: ['message' => 'Internal transfer validated successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be validated.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Internal transfer not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function validateTransfer(string $id)
@@ -160,7 +160,7 @@ class InternalTransferController extends OperationController
     #[Endpoint('Cancel internal transfer', 'Cancel internal transfer and related moves')]
     #[UrlParam('id', 'integer', 'The internal transfer ID', required: true, example: 1)]
     #[ResponseFromApiResource(InternalTransferResource::class, InternalTransfer::class, additional: ['message' => 'Internal transfer canceled successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be canceled.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Internal transfer not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function cancelTransfer(string $id)

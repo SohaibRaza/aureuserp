@@ -36,6 +36,7 @@ use Webkul\Inventory\Filament\Clusters\Products\Resources\PackageResource;
 use Webkul\Inventory\Filament\Clusters\Products\Resources\ProductResource;
 use Webkul\Inventory\Models\Lot;
 use Webkul\Inventory\Models\Move;
+use Webkul\Inventory\Models\MoveLine;
 use Webkul\Inventory\Models\Operation;
 use Webkul\Inventory\Models\OperationType;
 use Webkul\Inventory\Models\Packaging;
@@ -202,11 +203,17 @@ class OperationForm
                                     return;
                                 }
 
-                                $record->update(['destination_location_id' => $destinationLocationId]);
+                                $record->getConnection()->transaction(function () use ($record, $destinationLocationId): void {
+                                    $record->update(['destination_location_id' => $destinationLocationId]);
 
-                                $record->moves()->update(['destination_location_id' => $destinationLocationId]);
+                                    $record->moves()->get()->each(fn (Move $move) => $move->update([
+                                        'destination_location_id' => $destinationLocationId,
+                                    ]));
 
-                                $record->moveLines()->update(['destination_location_id' => $destinationLocationId]);
+                                    $record->moveLines()->get()->each(fn (MoveLine $line) => $line->update([
+                                        'destination_location_id' => $destinationLocationId,
+                                    ]));
+                                });
                             })
                             ->visible(fn (Get $get): bool => OperationResource::getWarehouseSettings()->enable_locations && OperationType::withTrashed()->find($get('operation_type_id'))?->type != Enums\OperationType::OUTGOING)
                             ->disabled(fn ($record): bool => in_array($record?->state, [OperationState::DONE, OperationState::CANCELED])),

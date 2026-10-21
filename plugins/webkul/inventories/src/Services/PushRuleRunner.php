@@ -15,6 +15,13 @@ class PushRuleRunner
 {
     public function run(Collection $moves): Collection
     {
+        return (new Move)->getConnection()->transaction(
+            fn (): Collection => $this->runLocked(Move::lockForStockMutation($moves, action: 'push_rules', preservePendingChanges: true))
+        );
+    }
+
+    protected function runLocked(Collection $moves): Collection
+    {
         $created = collect();
 
         foreach ($moves as $move) {

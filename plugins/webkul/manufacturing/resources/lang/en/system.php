@@ -2,6 +2,9 @@
 
 return [
     'manufacturing-manager' => [
+        'complete-order' => [
+            'only-active' => 'Only an active manufacturing order can be completed.',
+        ],
         'unplan-order' => [
             'work-orders-already-done'    => "Some work orders are already done, so you cannot un-plan this manufacturing order.\n\nIt'd be a shame to waste all that progress, right?",
             'work-orders-already-started' => "Some work orders have already started, so you cannot un-plan this manufacturing order.\n\nIt'd be a shame to waste all that progress, right?",

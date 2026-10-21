@@ -185,7 +185,7 @@ it('returns validate validation error for done dropship', function () {
 
     $this->postJson(dropshipRoute('validate', $dropship->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be validated.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns cancel validation error for canceled dropship', function () {
@@ -195,7 +195,7 @@ it('returns cancel validation error for canceled dropship', function () {
 
     $this->postJson(dropshipRoute('cancel', $dropship->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be canceled.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns return validation error when dropship is not done', function () {

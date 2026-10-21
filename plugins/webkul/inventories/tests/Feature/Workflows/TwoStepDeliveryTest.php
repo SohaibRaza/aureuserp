@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Validation\ValidationException;
 use Webkul\Inventory\Enums\DeliveryStep;
 use Webkul\Inventory\Enums\LocationType;
 use Webkul\Inventory\Enums\MoveState;
@@ -305,9 +306,16 @@ it('refuses to cancel the ship leg once it is done', function () {
     $ship = shipOperation($this->warehouse);
 
     Inventory::completeTransfer($ship->refresh());
+    $resultId = $ship->fresh()->terminalResult->id;
+    $sourceStock = InventoryHelper::onHand($this->product, $this->output);
+    $deliveredStock = InventoryHelper::onHand($this->product, $ship->destinationLocation);
 
     expect(fn () => Inventory::cancelTransfer($ship->refresh()))
-        ->toThrow(Exception::class, __('inventories::system.inventory-manager.cancel-move.already-done'));
+        ->toThrow(ValidationException::class, __('inventories::system.inventory-manager.replay-conflict'));
+    expect($ship->fresh()->state)->toBe(OperationState::DONE)
+        ->and($ship->terminalResult->id)->toBe($resultId)
+        ->and(InventoryHelper::onHand($this->product, $this->output))->toBe($sourceStock)
+        ->and(InventoryHelper::onHand($this->product, $ship->destinationLocation))->toBe($deliveredStock);
 });
 
 it('unreserves the pick move and drops it back to confirmed', function () {

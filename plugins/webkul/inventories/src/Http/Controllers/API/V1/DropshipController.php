@@ -140,7 +140,7 @@ class DropshipController extends OperationController
     #[Endpoint('Validate dropship', 'Validate dropship and complete stock moves')]
     #[UrlParam('id', 'integer', 'The dropship ID', required: true, example: 1)]
     #[ResponseFromApiResource(DropshipResource::class, Dropship::class, additional: ['message' => 'Dropship validated successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be validated.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Dropship not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function validateTransfer(string $id)
@@ -160,7 +160,7 @@ class DropshipController extends OperationController
     #[Endpoint('Cancel dropship', 'Cancel dropship and related moves')]
     #[UrlParam('id', 'integer', 'The dropship ID', required: true, example: 1)]
     #[ResponseFromApiResource(DropshipResource::class, Dropship::class, additional: ['message' => 'Dropship canceled successfully.'])]
-    #[Response(status: 422, description: 'Only non-done and non-canceled operations can be canceled.')]
+    #[Response(status: 422, description: 'Matching retries return the saved result. Conflicting instructions or closed operations without a saved result require review.')]
     #[Response(status: 404, description: 'Dropship not found')]
     #[Response(status: 401, description: 'Unauthenticated', content: '{"message": "Unauthenticated."}')]
     public function cancelTransfer(string $id)

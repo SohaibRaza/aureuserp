@@ -3,6 +3,7 @@
 namespace Webkul\Inventory\Services;
 
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 use Webkul\Inventory\Enums\MoveState;
 use Webkul\Inventory\Enums\OperationType;
 use Webkul\Inventory\Enums\ProcureMethod;
@@ -11,14 +12,28 @@ use Webkul\Inventory\Enums\ReservationMethod;
 use Webkul\Inventory\Models\Lot;
 use Webkul\Inventory\Models\Move;
 use Webkul\Inventory\Models\MoveLine;
+use Webkul\Inventory\Models\Operation;
 use Webkul\Inventory\Models\ProductQuantity;
+use Webkul\Inventory\Support\StockMutationGuard;
 
 class MoveCompleter
 {
     public function complete(Collection $moves, bool $cancelBackorder = false): Collection
     {
         return (new Move)->getConnection()->transaction(function () use ($moves, $cancelBackorder): Collection {
-            $moves = Move::lockForStockMutation($moves);
+            $moves = Move::lockForStockMutation($moves, validateMutation: false);
+
+            if ($moves->contains(fn (Move $move) => $move->state === MoveState::CANCELED)) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.canceled-completion')]);
+            }
+
+            $alreadyCompleted = $moves->where('state', MoveState::DONE);
+            $moves = $moves->reject(fn (Move $move) => $move->state === MoveState::DONE);
+            if ($moves->isEmpty()) {
+                return $alreadyCompleted;
+            }
+            $operations = Operation::query()->whereKey($moves->pluck('operation_id')->filter()->unique())->orderBy('id')->get();
+            app(StockMutationGuard::class)->assertAllowed('complete', $operations, $moves, ['cancel_backorder' => $cancelBackorder]);
 
             $reconfirmed = app(MoveConfirmer::class)->confirm(
                 $moves->filter(fn (Move $move) => $move->state === MoveState::DRAFT
@@ -41,6 +56,13 @@ class MoveCompleter
                 app(BackorderCreator::class)->splitShortMoves($completable);
             }
 
+            // Transparent rules must choose the actual destination before stock is settled.
+            $pushable = $completable->filter(fn (Move $move) => ! $move->skipsPushRules());
+
+            if ($pushable->isNotEmpty()) {
+                app(PushRuleRunner::class)->run($pushable);
+            }
+
             $this->completeLines($completable->flatMap->lines->sortBy('id'));
 
             $this->assertPackagesStayWhole($completable);
@@ -52,12 +74,6 @@ class MoveCompleter
             $operation = $completable->pluck('operation')->unique()->filter()->first();
 
             $completable->each->update(['state' => MoveState::DONE, 'date' => now()]);
-
-            $pushable = $completable->filter(fn (Move $move) => ! $move->skipsPushRules());
-
-            if ($pushable->isNotEmpty()) {
-                app(PushRuleRunner::class)->run($pushable);
-            }
 
             $this->reserveDownstream($completable);
 
@@ -73,11 +89,101 @@ class MoveCompleter
 
             $completable->each(fn (Move $move) => $move->assertSerialUniqueness());
 
-            return $completable;
+            return $completable->merge($alreadyCompleted);
         });
     }
 
+    /**
+     * Validate reserved physical stock for a controlled issue. Native workflows may
+     * still use their existing negative-stock policy when this check is not requested.
+     *
+     * @param  Collection<int, Move>  $moves
+     * @param  array<int, float>|null  $countedLineQuantities  Quantities in each movement line's unit.
+     */
+    public function assertReservedStockAvailable(Collection $moves, ?array $countedLineQuantities = null): void
+    {
+        $moves = Move::lockForStockMutation($moves, validateMutation: false);
+        $lines = MoveLine::query()->whereIn('move_id', $moves->pluck('id')->all())
+            ->whereNotIn('state', [MoveState::DONE, MoveState::CANCELED])
+            ->with(['product.uom', 'uom', 'move'])->orderBy('id')->lockForUpdate()->get()
+            ->filter(fn (MoveLine $line): bool => $line->product->is_storable);
+        $groups = $lines->groupBy(fn (MoveLine $line): string => json_encode([
+            $line->company_id, $line->product_id, $line->source_location_id,
+            $line->lot_id, $line->package_id, $line->move->restrict_partner_id,
+        ], JSON_THROW_ON_ERROR));
+
+        foreach ($groups as $group) {
+            $line = $group->first();
+            $reservedByLines = (float) $group->sum('uom_qty');
+            $required = $countedLineQuantities === null ? $reservedByLines : $group->sum(
+                fn (MoveLine $item): float => (float) $item->uom->computeQuantity(
+                    $countedLineQuantities[$item->id] ?? 0.0, $item->product->uom, roundingMethod: 'HALF-UP',
+                ),
+            );
+            if ($required <= 0) {
+                continue;
+            }
+            $stock = ProductQuantity::query()->where('company_id', $line->company_id)
+                ->where('product_id', $line->product_id)->where('location_id', $line->source_location_id)
+                ->where('lot_id', $line->lot_id)->where('package_id', $line->package_id)
+                ->whereNull('partner_id')->lockForUpdate()->first();
+            $reservedAfterCounting = (float) ($stock?->reserved_quantity ?? 0) - $reservedByLines + $required;
+
+            // Unit rounding must not hide a shortage in the four-decimal stock balance.
+            // Native settlement currently supports Company-owned balances only.
+            if ($line->move->restrict_partner_id !== null || ! $stock
+                || float_compare((float) $stock->reserved_quantity, $reservedByLines, precisionDigits: 4) < 0
+                || float_compare((float) $stock->quantity, $required, precisionDigits: 4) < 0
+                || float_compare((float) $stock->quantity, $reservedAfterCounting, precisionDigits: 4) < 0) {
+                throw ValidationException::withMessages([
+                    'operation' => __('inventories::system.inventory-manager.stock-not-ready'),
+                ]);
+            }
+        }
+    }
+
     public function completeLines(Collection $lines): void
+    {
+        if ($lines->isEmpty()) {
+            return;
+        }
+
+        (new Move)->getConnection()->transaction(function () use ($lines): void {
+            $ids = $lines->pluck('id')->unique();
+            $moves = Move::query()->whereKey($lines->pluck('move_id')->unique())->get();
+            $lockedMoves = Move::lockForStockMutation(
+                $moves,
+                $lines->pluck('product_id')->filter()->unique()->all(),
+                validateMutation: false,
+            );
+            $lockedLines = MoveLine::query()->whereKey($ids)->orderBy('id')->lockForUpdate()->get();
+
+            if ($lockedLines->count() !== $ids->count()
+                || $lockedLines->contains(fn (MoveLine $line) => ! $lockedMoves->contains('id', $line->move_id))) {
+                throw new \RuntimeException(__('inventories::system.inventory-manager.stale-operation'));
+            }
+
+            if ($lockedLines->contains(fn (MoveLine $line) => $line->state === MoveState::CANCELED)) {
+                throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.canceled-completion')]);
+            }
+
+            foreach ($lines as $submitted) {
+                if ($lockedLines->firstWhere('id', $submitted->id)?->state === MoveState::DONE
+                    && $submitted->isDirty(['qty', 'uom_qty', 'uom_id', 'product_id', 'move_id', 'operation_id', 'source_location_id', 'destination_location_id', 'lot_id', 'package_id', 'result_package_id', 'partner_id', 'company_id'])) {
+                    throw ValidationException::withMessages(['operation' => __('inventories::system.inventory-manager.terminal-change')]);
+                }
+            }
+            $pending = $lockedLines->reject(fn (MoveLine $line) => $line->state === MoveState::DONE);
+            if ($pending->isNotEmpty()) {
+                $pendingMoves = $lockedMoves->whereIn('id', $pending->pluck('move_id'));
+                $operations = Operation::query()->whereKey($pendingMoves->pluck('operation_id')->filter()->unique())->orderBy('id')->get();
+                app(StockMutationGuard::class)->assertAllowed('complete.lines', $operations, $pendingMoves);
+                $this->completeLockedLines($pending);
+            }
+        });
+    }
+
+    protected function completeLockedLines(Collection $lines): void
     {
         $missingLotIds = collect();
 
@@ -233,7 +339,7 @@ class MoveCompleter
             $settledIds->push($line->id);
         }
 
-        $lines->each->update(['scheduled_at' => now()]);
+        $lines->each->update(['scheduled_at' => now(), 'state' => MoveState::DONE]);
     }
 
     protected function dropUnpickedLines(Collection $moves, bool $cancelBackorder): void

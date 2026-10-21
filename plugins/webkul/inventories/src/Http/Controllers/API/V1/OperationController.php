@@ -114,7 +114,7 @@ class OperationController extends Controller
         $operation = $this->findOperationById($id);
         $operation = Inventory::reserveTransfer($operation);
 
-        return $operation->refresh()->load($this->allowedIncludes);
+        return $operation->refresh()->load([...$this->allowedIncludes, 'terminalResult']);
     }
 
     protected function todoById(string $id): Operation
@@ -122,7 +122,7 @@ class OperationController extends Controller
         $operation = $this->findOperationById($id);
         $operation = Inventory::confirmTransfer($operation);
 
-        return $operation->refresh()->load($this->allowedIncludes);
+        return $operation->refresh()->load([...$this->allowedIncludes, 'terminalResult']);
     }
 
     protected function validateById(string $id): Operation
@@ -130,7 +130,7 @@ class OperationController extends Controller
         $operation = $this->findOperationById($id);
         $operation = Inventory::completeTransfer($operation);
 
-        return $operation->refresh()->load($this->allowedIncludes);
+        return $operation->refresh()->load([...$this->allowedIncludes, 'terminalResult']);
     }
 
     protected function cancelById(string $id): Operation
@@ -138,7 +138,7 @@ class OperationController extends Controller
         $operation = $this->findOperationById($id);
         $operation = Inventory::cancelTransfer($operation);
 
-        return $operation->refresh()->load($this->allowedIncludes);
+        return $operation->refresh()->load([...$this->allowedIncludes, 'terminalResult']);
     }
 
     protected function returnById(string $id): Operation
@@ -146,7 +146,7 @@ class OperationController extends Controller
         $operation = $this->findOperationById($id);
         $newOperation = Inventory::createReturn($operation);
 
-        return $newOperation->refresh()->load($this->allowedIncludes);
+        return $newOperation->refresh()->load([...$this->allowedIncludes, 'terminalResult']);
     }
 
     protected function ensureCanCheckAvailability(Operation $operation): ?JsonResponse
@@ -181,19 +181,12 @@ class OperationController extends Controller
 
     protected function ensureCanValidate(Operation $operation): ?JsonResponse
     {
-        if (in_array($operation->state, [OperationState::DONE, OperationState::CANCELED], true)) {
-            return $this->actionValidationError('Only non-done and non-canceled operations can be validated.');
-        }
-
+        // Terminal commands are checked by the owner service, including matching retries.
         return null;
     }
 
     protected function ensureCanCancel(Operation $operation): ?JsonResponse
     {
-        if (in_array($operation->state, [OperationState::DONE, OperationState::CANCELED], true)) {
-            return $this->actionValidationError('Only non-done and non-canceled operations can be canceled.');
-        }
-
         return null;
     }
 
@@ -228,7 +221,7 @@ class OperationController extends Controller
                 $this->syncMoves($operation, $movesData);
             }
 
-            $operation->load($this->allowedIncludes);
+            $operation->load([...$this->allowedIncludes, 'terminalResult']);
 
             return (new ($this->resourceClass())($operation))
                 ->additional(['message' => $this->createdMessage()])
@@ -254,7 +247,7 @@ class OperationController extends Controller
                 $this->syncMoves($operation->fresh(), $movesData);
             }
 
-            $operation = $operation->fresh()->load($this->allowedIncludes);
+            $operation = $operation->fresh()->load([...$this->allowedIncludes, 'terminalResult']);
 
             return (new ($this->resourceClass())($operation))
                 ->additional(['message' => $this->updatedMessage()]);
@@ -347,7 +340,7 @@ class OperationController extends Controller
         $moveIdsToDelete = array_diff($existingMoveIds, $retainedMoveIds);
 
         if (! empty($moveIdsToDelete)) {
-            $operation->moves()->whereIn('id', $moveIdsToDelete)->delete();
+            $operation->moves()->whereIn('id', $moveIdsToDelete)->get()->each->delete();
         }
     }
 

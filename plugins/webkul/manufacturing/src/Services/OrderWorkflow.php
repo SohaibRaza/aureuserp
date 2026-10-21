@@ -139,23 +139,31 @@ class OrderWorkflow
 
     public function complete(Order $order): void
     {
-        $order->workOrders->each->finish();
+        $order->getConnection()->transaction(function () use ($order): void {
+            $order = Order::query()->whereKey($order->getKey())->lockForUpdate()->firstOrFail();
 
-        app(ProductionRecorder::class)->record($order, cancelBackorder: true);
+            if (! in_array($order->state, [ManufacturingOrderState::CONFIRMED, ManufacturingOrderState::PROGRESS, ManufacturingOrderState::TO_CLOSE])) {
+                throw new \DomainException(__('manufacturing::system.manufacturing-manager.complete-order.only-active'));
+            }
 
-        $order->rawMaterialMoves
-            ->merge($order->finishedMoves)
-            ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DONE, MoveState::CANCELED]))
-            ->each->update(['state' => MoveState::DONE]);
+            $order->workOrders->each->finish();
 
-        $order->update([
-            'state'       => ManufacturingOrderState::DONE,
-            'is_locked'   => true,
-            'priority'    => '0',
-            'finished_at' => now(),
-        ]);
+            app(ProductionRecorder::class)->record($order, cancelBackorder: true);
 
-        OrderDone::dispatch($order);
+            $order->rawMaterialMoves
+                ->merge($order->finishedMoves)
+                ->filter(fn (Move $move) => ! in_array($move->state, [MoveState::DONE, MoveState::CANCELED]))
+                ->each->update(['state' => MoveState::DONE]);
+
+            $order->update([
+                'state'       => ManufacturingOrderState::DONE,
+                'is_locked'   => true,
+                'priority'    => '0',
+                'finished_at' => now(),
+            ]);
+
+            OrderDone::dispatch($order);
+        });
     }
 
     public function cancel(Order $order): Order

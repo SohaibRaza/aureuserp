@@ -185,7 +185,7 @@ it('returns validate validation error for done internal transfer', function () {
 
     $this->postJson(internalTransferRoute('validate', $internalTransfer->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be validated.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns cancel validation error for canceled internal transfer', function () {
@@ -195,7 +195,7 @@ it('returns cancel validation error for canceled internal transfer', function ()
 
     $this->postJson(internalTransferRoute('cancel', $internalTransfer->id))
         ->assertUnprocessable()
-        ->assertJsonPath('message', 'Only non-done and non-canceled operations can be canceled.');
+        ->assertJsonPath('message', __('inventories::system.inventory-manager.legacy-terminal'));
 });
 
 it('returns return validation error when internal transfer is not done', function () {
