@@ -24,6 +24,8 @@ use Webkul\Sale\Facades\SaleOrder as SaleOrderFacade;
 use Webkul\Sale\Http\Requests\OrderRequest;
 use Webkul\Sale\Http\Resources\V1\OrderResource;
 use Webkul\Sale\Models\Order;
+use Webkul\Sale\Models\OrderLine;
+use Webkul\Sale\Services\OrderSourceRevision;
 use Webkul\Support\Models\UOM;
 
 #[Group('Sales API Management')]
@@ -160,6 +162,13 @@ class OrderController extends Controller
         $data = $request->validated();
 
         return DB::transaction(function () use ($order, $data) {
+            $revisions = app(OrderSourceRevision::class);
+            $order = $revisions->lock($order);
+            Gate::authorize('update', $order);
+            if ($revisions->requiresCheck($order, $data)) {
+                $revisions->assertCurrent($order, $data['expected_source_revision'] ?? null);
+            }
+            unset($data['expected_source_revision']);
             $lines = $data['lines'] ?? null;
             $tags = $data['sales_order_tags'] ?? null;
 
@@ -349,7 +358,9 @@ class OrderController extends Controller
 
         $order->lines()
             ->whereNotIn('id', $submittedIds)
-            ->delete();
+            ->orderBy('id')
+            ->get()
+            ->each(fn (OrderLine $line) => $line->delete());
 
         foreach ($linesData as $lineData) {
             $taxes = $lineData['taxes'] ?? null;
@@ -383,13 +394,15 @@ class OrderController extends Controller
                 'order_partner_id' => $order->partner_id,
                 'salesman_id'      => $order->user_id,
                 'product_qty'      => $lineData['product_qty'] ?? 0,
-                'product_uom_qty'  => $lineData['product_qty'] ?? 0,
                 'price_unit'       => $lineData['price_unit'] ?? $this->resolveLinePrice($order, $product, $lineData),
                 'discount'         => $lineData['discount'] ?? 0,
                 'customer_lead'    => $lineData['customer_lead'] ?? 0,
             ], $lineData);
 
             if ($lineId) {
+                if (! array_key_exists('product_uom_id', $lineData)) {
+                    unset($payload['product_uom_id']);
+                }
                 $orderLine = $order->lines()->find($lineId);
 
                 if (! $orderLine) {
@@ -398,6 +411,7 @@ class OrderController extends Controller
 
                 $orderLine->update($payload);
             } else {
+                $payload['product_uom_qty'] = $lineData['product_qty'] ?? 0;
                 $orderLine = $order->lines()->create($payload);
             }
 

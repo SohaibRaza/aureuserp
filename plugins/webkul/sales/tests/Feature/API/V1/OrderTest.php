@@ -4,13 +4,18 @@ use Illuminate\Testing\TestResponse;
 use Webkul\Product\Enums\PriceRuleApplyTo;
 use Webkul\Product\Enums\PriceRuleType;
 use Webkul\Product\Models\PriceList;
+use Webkul\Product\Models\Product;
 use Webkul\Sale\Enums\OrderState;
+use Webkul\Sale\Facades\SaleOrder;
 use Webkul\Sale\Models\Order;
 use Webkul\Sale\Models\OrderLine;
+use Webkul\Sale\Services\OrderSourceRevision;
 use Webkul\Security\Enums\PermissionType;
 use Webkul\Security\Models\User;
+use Webkul\Support\Enums\UOMType;
 use Webkul\Support\Models\Company;
 use Webkul\Support\Models\Currency;
+use Webkul\Support\Models\UOM;
 
 require_once __DIR__.'/../../../../../support/tests/Helpers/SecurityHelper.php';
 require_once __DIR__.'/../../../../../support/tests/Helpers/TestBootstrapHelper.php';
@@ -324,4 +329,116 @@ it('prices an order line from the price list when no unit price is sent', functi
         ->assertCreated();
 
     expect((float) OrderLine::query()->where('order_id', $response->json('data.id'))->value('price_unit'))->toBe(77.0);
+});
+
+it('rejects removing a confirmed item through order synchronization without partial changes', function (): void {
+    actingAsSalesOrderApiUser(['update_sale_order']);
+    $order = Order::factory()->create(['state' => OrderState::DRAFT]);
+    $product = Product::factory()->create(['company_id' => $order->company_id]);
+    $first = OrderLine::factory()->create([
+        'order_id'    => $order->id, 'company_id' => $order->company_id,
+        'product_id'  => $product->id, 'product_uom_id' => $product->uom_id,
+        'product_qty' => 10, 'product_uom_qty' => 10,
+    ]);
+    $omitted = OrderLine::factory()->create([
+        'order_id'    => $order->id, 'company_id' => $order->company_id,
+        'product_id'  => $product->id, 'product_uom_id' => $product->uom_id,
+        'product_qty' => 5, 'product_uom_qty' => 5,
+    ]);
+    SaleOrder::confirmSaleOrder($order);
+
+    test()->patchJson(salesOrderRoute('update', $order), [
+        'expected_source_revision' => app(OrderSourceRevision::class)->token($order->fresh()),
+        'note'                     => 'This change must roll back',
+        'lines'                    => [[
+            'id'          => $first->id, 'product_id' => $product->id,
+            'product_qty' => 12, 'product_uom_id' => $product->uom_id, 'price_unit' => 100,
+        ]],
+    ])->assertUnprocessable()->assertJsonValidationErrors('products');
+
+    expect($order->refresh()->note)->not->toBe('This change must roll back')
+        ->and((float) $first->fresh()->product_qty)->toBe(10.0)
+        ->and($omitted->fresh())->not->toBeNull()
+        ->and($first->quantityCommitments()->count())->toBe(1)
+        ->and($omitted->quantityCommitments()->count())->toBe(1);
+});
+
+it('preserves an unchanged carton line when a confirmed API order is resubmitted', function (bool $locked): void {
+    TestBootstrapHelper::ensurePluginInstalled('inventories');
+    actingAsSalesOrderApiUser(['update_sale_order', 'view_sale_order']);
+    $order = Order::factory()->create(['state' => OrderState::DRAFT]);
+    $product = Product::factory()->create(['company_id' => $order->company_id]);
+    $stock = $product->uom;
+    $carton = UOM::factory()->create([
+        'category_id' => $stock->category_id, 'type' => UOMType::BIGGER,
+        'factor'      => $stock->factor / 12, 'rounding' => 1,
+    ]);
+    $line = OrderLine::factory()->create([
+        'order_id'       => $order->id, 'company_id' => $order->company_id, 'product_id' => $product->id,
+        'product_uom_id' => $carton->id, 'product_qty' => 6, 'product_uom_qty' => 72,
+    ]);
+    SaleOrder::confirmSaleOrder($order);
+    $order->refresh()->update(['locked' => $locked]);
+    $moves = $line->inventoryMoves()->get()->toArray();
+    test()->patchJson(salesOrderRoute('update', $order), ['lines' => [[
+        'id'          => $line->id, 'product_id' => $product->id, 'product_uom_id' => $carton->id,
+        'product_qty' => 6, 'price_unit' => (float) $line->price_unit,
+    ]]])->assertOk();
+    test()->patchJson(salesOrderRoute('update', $order), ['lines' => [[
+        'id'          => $line->id, 'product_id' => $product->id,
+        'product_qty' => 6, 'price_unit' => (float) $line->price_unit,
+    ]]])->assertOk();
+    expect((float) $line->fresh()->product_uom_qty)->toBe(72.0)
+        ->and($line->fresh()->product_uom_id)->toBe($carton->id)
+        ->and($line->quantityCommitments()->count())->toBe(1)
+        ->and($line->inventoryMoves()->get()->toArray())->toBe($moves);
+})->with(['unlocked' => false, 'locked' => true]);
+
+it('rejects a second API client with a stale source revision before any writes', function (): void {
+    actingAsSalesOrderApiUser(['update_sale_order', 'view_sale_order']);
+    $order = Order::factory()->create(['state' => OrderState::DRAFT]);
+    $product = Product::factory()->create(['company_id' => $order->company_id]);
+    $line = OrderLine::factory()->create([
+        'order_id'       => $order->id, 'company_id' => $order->company_id, 'product_id' => $product->id,
+        'product_uom_id' => $product->uom_id, 'product_qty' => 10, 'product_uom_qty' => 10,
+    ]);
+    SaleOrder::confirmSaleOrder($order);
+    $token = test()->getJson(salesOrderRoute('show', $order))->assertOk()->json('data.source_revision');
+    expect($token)->toBeString();
+    $payload = ['expected_source_revision' => $token, 'lines' => [[
+        'id'          => $line->id, 'product_id' => $product->id, 'product_uom_id' => $product->uom_id,
+        'product_qty' => 12, 'price_unit' => 100,
+    ]]];
+    test()->patchJson(salesOrderRoute('update', $order), $payload)->assertOk();
+    $payload['lines'][0]['product_qty'] = 14;
+    $payload['note'] = 'Stale edit must not persist';
+    test()->patchJson(salesOrderRoute('update', $order), $payload)
+        ->assertUnprocessable()->assertJsonValidationErrors('products');
+    expect((float) $line->fresh()->product_qty)->toBe(12.0)
+        ->and($line->quantityCommitments()->count())->toBe(2)
+        ->and($order->fresh()->note)->not->toBe('Stale edit must not persist');
+});
+
+it('requires the original source revision before adding a confirmed item', function (): void {
+    actingAsSalesOrderApiUser(['update_sale_order', 'view_sale_order']);
+    $order = Order::factory()->create(['state' => OrderState::DRAFT]);
+    $product = Product::factory()->create(['company_id' => $order->company_id]);
+    $line = OrderLine::factory()->create([
+        'order_id'       => $order->id, 'company_id' => $order->company_id, 'product_id' => $product->id,
+        'product_uom_id' => $product->uom_id, 'product_qty' => 10, 'product_uom_qty' => 10,
+    ]);
+    SaleOrder::confirmSaleOrder($order);
+    $payload = ['note' => 'Not accepted without a source check', 'lines' => [
+        ['id' => $line->id, 'product_id' => $product->id, 'product_uom_id' => $product->uom_id, 'product_qty' => 10, 'price_unit' => 100],
+        ['product_id' => $product->id, 'product_uom_id' => $product->uom_id, 'product_qty' => 2, 'price_unit' => 100],
+    ]];
+    test()->patchJson(salesOrderRoute('update', $order), $payload)
+        ->assertUnprocessable()->assertJsonValidationErrors('products');
+    expect($order->lines()->count())->toBe(1)
+        ->and($line->quantityCommitments()->count())->toBe(1)
+        ->and($order->fresh()->note)->not->toBe($payload['note']);
+    $payload['expected_source_revision'] = test()->getJson(salesOrderRoute('show', $order))->json('data.source_revision');
+    test()->patchJson(salesOrderRoute('update', $order), $payload)->assertOk();
+    expect($order->lines()->count())->toBe(2)
+        ->and($order->lines()->latest('id')->firstOrFail()->quantityCommitments()->count())->toBe(1);
 });

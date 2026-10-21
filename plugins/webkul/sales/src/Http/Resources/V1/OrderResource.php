@@ -10,6 +10,7 @@ use Webkul\Account\Http\Resources\V1\PaymentTermResource;
 use Webkul\Inventory\Http\Resources\V1\WarehouseResource;
 use Webkul\Partner\Http\Resources\V1\PartnerResource;
 use Webkul\Product\Http\Resources\V1\PriceListResource;
+use Webkul\Sale\Services\OrderSourceRevision;
 use Webkul\Security\Http\Resources\V1\TeamResource;
 use Webkul\Security\Http\Resources\V1\UserResource;
 use Webkul\Support\Http\Resources\V1\CompanyResource;
@@ -29,6 +30,7 @@ class OrderResource extends JsonResource
     {
         return [
             'id'                  => $this->id,
+            'source_revision'     => app(OrderSourceRevision::class)->token($this->resource),
             'name'                => $this->name,
             'state'               => $this->state?->value,
             'invoice_status'      => $this->invoice_status?->value,

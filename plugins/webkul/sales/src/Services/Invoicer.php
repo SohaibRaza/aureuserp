@@ -4,7 +4,6 @@ namespace Webkul\Sale\Services;
 
 use Illuminate\Support\Facades\Auth;
 use Webkul\Account\Enums as AccountEnums;
-use Webkul\Account\Enums\InvoicePolicy;
 use Webkul\Account\Facades\Account as AccountFacade;
 use Webkul\Account\Models\Move as AccountMove;
 use Webkul\Sale\Enums\AdvancedPayment;
@@ -61,11 +60,7 @@ class Invoicer
 
     public function createInvoiceLine(AccountMove $accountMove, OrderLine $orderLine): void
     {
-        $policy = $orderLine->product?->invoice_policy ?? $this->invoiceSettings->invoice_policy->value;
-
-        $quantity = $policy === InvoicePolicy::ORDER->value
-            ? $orderLine->product_uom_qty
-            : $orderLine->qty_to_invoice;
+        $quantity = $orderLine->qty_to_invoice;
 
         $accountMoveLine = $accountMove->lines()->create([
             'name'         => $orderLine->name,
@@ -80,7 +75,7 @@ class Invoicer
             'uom_id'       => $orderLine->product_uom_id,
         ]);
 
-        $orderLine->accountMoveLines()->sync($accountMoveLine->id);
+        $orderLine->accountMoveLines()->syncWithoutDetaching([$accountMoveLine->id]);
 
         $accountMoveLine->taxes()->sync($orderLine->taxes->pluck('id'));
     }

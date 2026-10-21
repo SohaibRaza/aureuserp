@@ -1,10 +1,10 @@
 <?php
 
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use Webkul\Account\Models\PaymentTerm;
+use Webkul\Partner\Models\Partner;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\Product\Models\PriceList;
@@ -43,11 +43,17 @@ beforeEach(function () {
 function quotationRecord(?int $userId = null, OrderState $state = OrderState::DRAFT): Order
 {
     $order = SaleHelper::order([
-        'state'   => $state,
+        'state'   => OrderState::DRAFT,
         'user_id' => $userId,
     ]);
 
     SaleHelper::line($order, SaleHelper::product(), qty: 2, priceUnit: 100);
+
+    // Read-only state visibility fixtures do not execute a confirmation command.
+    if ($state !== OrderState::DRAFT) {
+        DB::table('sales_orders')->where('id', $order->id)->update(['state' => $state->value]);
+        DB::table('sales_order_lines')->where('order_id', $order->id)->update(['state' => $state->value]);
+    }
 
     return $order->refresh();
 }
@@ -90,7 +96,8 @@ it('renders the quotation create page', function () {
 it('creates a quotation through the create form', function () {
     FilamentHelper::actingAs(['view_any_sale_quotation', 'create_sale_quotation']);
 
-    $partner = SaleHelper::partner();
+    $partner = Partner::factory()->create(['customer_rank' => 1]);
+    $product = SaleHelper::product();
 
     Livewire::test(CreateQuotation::class)
         ->fillForm([
@@ -98,6 +105,10 @@ it('creates a quotation through the create form', function () {
             'date_order'      => now(),
             'validity_date'   => now()->addDays(30),
             'payment_term_id' => PaymentTerm::query()->value('id'),
+            'products'        => [[
+                'product_id'  => $product->id, 'name' => $product->name, 'product_uom_id' => $product->uom_id,
+                'product_qty' => 2, 'product_uom_qty' => 2, 'price_unit' => 100, 'customer_lead' => 0,
+            ]],
         ])
         ->call('create')
         ->assertHasNoFormErrors();
@@ -226,8 +237,7 @@ it('refuses to open a quotation owned by another company', function () {
         'update_sale_quotation',
     ]);
 
-    expect(fn () => Livewire::test(EditQuotation::class, ['record' => $quotation->id]))
-        ->toThrow(ModelNotFoundException::class);
+    Livewire::test(EditQuotation::class, ['record' => $quotation->id])->assertNotFound();
 });
 
 it('takes the order currency from the selected price list', function () {
@@ -237,7 +247,8 @@ it('takes the order currency from the selected price list', function () {
 
     FilamentHelper::actingAs(['view_any_sale_quotation', 'create_sale_quotation']);
 
-    $partner = SaleHelper::partner();
+    $partner = Partner::factory()->create(['customer_rank' => 1]);
+    $product = SaleHelper::product();
 
     $otherCurrency = Currency::query()->whereKeyNot(SaleHelper::currency()->id)->first();
 
@@ -249,6 +260,10 @@ it('takes the order currency from the selected price list', function () {
             'date_order'      => now(),
             'validity_date'   => now()->addDays(30),
             'payment_term_id' => PaymentTerm::query()->value('id'),
+            'products'        => [[
+                'product_id'  => $product->id, 'name' => $product->name, 'product_uom_id' => $product->uom_id,
+                'product_qty' => 2, 'product_uom_qty' => 2, 'price_unit' => 100, 'customer_lead' => 0,
+            ]],
             'price_list_id'   => $priceList->id,
         ])
         ->assertFormSet(['currency_id' => $otherCurrency->id])
@@ -261,7 +276,8 @@ it('takes the order currency from the selected price list', function () {
 it('still saves a currency when no price list is chosen', function () {
     FilamentHelper::actingAs(['view_any_sale_quotation', 'create_sale_quotation']);
 
-    $partner = SaleHelper::partner();
+    $partner = Partner::factory()->create(['customer_rank' => 1]);
+    $product = SaleHelper::product();
 
     Livewire::test(CreateQuotation::class)
         ->fillForm([
@@ -269,6 +285,10 @@ it('still saves a currency when no price list is chosen', function () {
             'date_order'      => now(),
             'validity_date'   => now()->addDays(30),
             'payment_term_id' => PaymentTerm::query()->value('id'),
+            'products'        => [[
+                'product_id'  => $product->id, 'name' => $product->name, 'product_uom_id' => $product->uom_id,
+                'product_qty' => 2, 'product_uom_qty' => 2, 'price_unit' => 100, 'customer_lead' => 0,
+            ]],
         ])
         ->call('create')
         ->assertHasNoFormErrors();

@@ -27,6 +27,7 @@ class OrderRequest extends FormRequest
         $requiredRule = $isUpdate ? ['sometimes', 'required'] : ['required'];
 
         $rules = [
+            'expected_source_revision'      => ['sometimes', 'nullable', 'string', 'regex:/^v1:[a-f0-9]{64}$/'],
             'partner_id'                    => [...$requiredRule, 'integer', 'exists:partners_partners,id'],
             'payment_term_id'               => [...$requiredRule, 'integer', 'exists:accounts_payment_terms,id'],
             'date_order'                    => [...$requiredRule, 'date'],
@@ -101,6 +102,10 @@ class OrderRequest extends FormRequest
     public function bodyParameters(): array
     {
         return [
+            'expected_source_revision' => [
+                'description' => 'Send the source_revision from the order read before changing confirmed items or delivery details. Reload after a conflict.',
+                'example'     => null,
+            ],
             'partner_id' => [
                 'description' => 'Customer (partner) ID.',
                 'example'     => 1,

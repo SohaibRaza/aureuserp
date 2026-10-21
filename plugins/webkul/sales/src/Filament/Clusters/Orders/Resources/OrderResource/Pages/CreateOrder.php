@@ -5,9 +5,9 @@ namespace Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource\Pages;
 use Exception;
 use Filament\Notifications\Notification;
 use Illuminate\Validation\ValidationException;
-use Webkul\Sale\Facades\SaleOrder;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource\Pages\CreateQuotation as BaseCreateOrders;
+use Webkul\Sale\Services\OrderWorkflow;
 
 class CreateOrder extends BaseCreateOrders
 {
@@ -40,7 +40,7 @@ class CreateOrder extends BaseCreateOrders
     protected function afterCreate(): void
     {
         try {
-            SaleOrder::confirmSaleOrder($this->getRecord());
+            app(OrderWorkflow::class)->confirmCreatedOrder($this->getRecord());
         } catch (Exception $exception) {
             Notification::make()
                 ->danger()

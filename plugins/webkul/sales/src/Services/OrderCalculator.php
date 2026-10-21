@@ -14,6 +14,7 @@ use Webkul\Sale\Enums\QtyDeliveredMethod;
 use Webkul\Sale\Models\Order;
 use Webkul\Sale\Models\OrderLine;
 use Webkul\Sale\Settings\InvoiceSettings;
+use Webkul\Support\Models\UOM;
 
 class OrderCalculator
 {
@@ -63,9 +64,9 @@ class OrderCalculator
 
         $line->technical_price_unit = $line->price_unit;
 
-        $line->price_reduce_taxexcl = $line->product_uom_qty ? round($line->price_subtotal / $line->product_uom_qty, 4) : 0.0;
+        $line->price_reduce_taxexcl = $line->product_qty ? round($line->price_subtotal / $line->product_qty, 4) : 0.0;
 
-        $line->price_reduce_taxinc = $line->product_uom_qty ? round($line->price_total / $line->product_uom_qty, 4) : 0.0;
+        $line->price_reduce_taxinc = $line->product_qty ? round($line->price_total / $line->product_qty, 4) : 0.0;
 
         $line->state = $line->order->state;
 
@@ -154,11 +155,21 @@ class OrderCalculator
 
         $delivered = fn ($moves) => $moves
             ->filter(fn ($move) => $move->state == InventoryEnums\MoveState::DONE)
-            ->sum(fn ($move) => $move->uom->computeQuantity($move->quantity, $line->uom, true, 'HALF-UP'));
+            ->sum(fn ($move) => $this->commercialQuantity($line, $move->quantity, $move->uom));
 
         $line->qty_delivered = $delivered($outgoingMoves) - $delivered($incomingMoves);
 
         return $line;
+    }
+
+    private function commercialQuantity(OrderLine $line, float $quantity, UOM $unit): float
+    {
+        $snapshot = $line->currentQuantityCommitment?->data;
+        if ($snapshot && $unit->id === $snapshot['stock_unit']['id']) {
+            return $quantity / $snapshot['stock_units_per_commercial_unit'];
+        }
+
+        return $unit->computeQuantity($quantity, $line->uom, true, 'HALF-UP');
     }
 
     public function refreshQtyToInvoice(OrderLine $line): OrderLine
@@ -170,7 +181,7 @@ class OrderCalculator
         }
 
         $line->qty_to_invoice = $this->invoicePolicyFor($line) === InvoicePolicy::ORDER->value
-            ? $line->product_uom_qty - $line->qty_invoiced
+            ? $line->product_qty - $line->qty_invoiced
             : $line->qty_delivered - $line->qty_invoiced;
 
         return $line;
@@ -272,8 +283,8 @@ class OrderCalculator
     protected function orderPolicyInvoiceStatus(OrderLine $line): InvoiceStatus
     {
         return match (true) {
-            $line->qty_invoiced >= $line->product_uom_qty  => InvoiceStatus::INVOICED,
-            $line->qty_delivered > $line->product_uom_qty  => InvoiceStatus::UP_SELLING,
+            $line->qty_invoiced >= $line->product_qty      => InvoiceStatus::INVOICED,
+            $line->qty_delivered > $line->product_qty      => InvoiceStatus::UP_SELLING,
             default                                        => InvoiceStatus::TO_INVOICE,
         };
     }
@@ -281,16 +292,16 @@ class OrderCalculator
     protected function deliveryPolicyInvoiceStatus(OrderLine $line): InvoiceStatus
     {
         return match (true) {
-            $line->qty_invoiced >= $line->product_uom_qty => InvoiceStatus::INVOICED,
+            $line->qty_invoiced >= $line->product_qty => InvoiceStatus::INVOICED,
             $line->qty_to_invoice != 0
-                || $line->qty_delivered == $line->product_uom_qty => InvoiceStatus::TO_INVOICE,
+                || $line->qty_delivered == $line->product_qty     => InvoiceStatus::TO_INVOICE,
             default                                               => InvoiceStatus::NO,
         };
     }
 
     public function refreshUntaxedAmountToInvoice(OrderLine $line): OrderLine
     {
-        if ($line->state !== OrderState::SALE) {
+        if ($line->state !== OrderState::SALE || $line->display_type || ! $line->product_id) {
             $line->untaxed_amount_to_invoice = 0;
 
             return $line;
@@ -298,7 +309,7 @@ class OrderCalculator
 
         $quantity = $line->product->invoice_policy === InvoicePolicy::DELIVERY->value
             ? $line->qty_delivered
-            : $line->product_uom_qty;
+            : $line->product_qty;
 
         $priceReduce = $line->price_unit * (1 - (($line->discount ?? 0.0) / 100.0));
 

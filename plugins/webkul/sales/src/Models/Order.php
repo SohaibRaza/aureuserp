@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 use Webkul\Account\Models\FiscalPosition;
 use Webkul\Account\Models\Journal;
@@ -17,6 +19,7 @@ use Webkul\Account\Models\PaymentTerm;
 use Webkul\Chatter\Traits\HasChatter;
 use Webkul\Chatter\Traits\HasLogActivity;
 use Webkul\Field\Traits\HasCustomFields;
+use Webkul\Inventory\Enums\OperationState;
 use Webkul\Inventory\Models\Operation;
 use Webkul\Inventory\Models\ProcurementGroup;
 use Webkul\Inventory\Models\Warehouse;
@@ -28,6 +31,7 @@ use Webkul\Sale\Enums\OrderDeliveryStatus;
 use Webkul\Sale\Enums\OrderState;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\OrderResource;
 use Webkul\Sale\Filament\Clusters\Orders\Resources\QuotationResource;
+use Webkul\Sale\Services\QuantityCommitmentRecorder;
 use Webkul\Security\Models\User;
 use Webkul\Security\Traits\HasOwnershipScope;
 use Webkul\Support\Models\Company;
@@ -103,6 +107,55 @@ class Order extends Model
         'signed_on'       => 'date',
         'locked'          => 'boolean',
     ];
+
+    public function save(array $options = []): bool
+    {
+        if (! $this->exists) {
+            return parent::save($options);
+        }
+
+        return $this->getConnection()->transaction(function () use ($options) {
+            $stored = static::query()->withTrashed()->lockForUpdate()->findOrFail($this->getKey());
+            $sourceChanged = collect(QuantityCommitmentRecorder::ORDER_FIELDS)
+                ->contains(fn (string $field): bool => $this->getAttribute($field) != $stored->getAttribute($field));
+            $confirmed = $stored->state === OrderState::SALE;
+            if ($this->isDirty('company_id') && QuantityCommitment::query()->where('order_id', $this->getKey())->exists()) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.source')]);
+            }
+            if ($this->state === OrderState::SALE && ! $confirmed
+                && $this->lines()->whereNull('display_type')->where('is_downpayment', false)->where('is_expense', false)
+                    ->whereNotNull('product_id')->whereNotIn('id', QuantityCommitment::query()->select('order_line_id'))->exists()) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.confirm')]);
+            }
+            if ($sourceChanged && $confirmed) {
+                Gate::authorize('update', $stored);
+                foreach ($this->lines()->orderBy('id')->lockForUpdate()->get() as $line) {
+                    if (app(QuantityCommitmentRecorder::class)->applicable($line) && ! $line->quantityCommitments()->exists()) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.unverified')]);
+                    }
+                }
+                if ($stored->locked) {
+                    throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.locked')]);
+                }
+                if ($this->isDirty('company_id') || $stored->operations()->where('state', '!=', OperationState::CANCELED)->exists()) {
+                    throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.delivery')]);
+                }
+                foreach (QuantityCommitmentRecorder::ORDER_FIELDS as $field) {
+                    if ($this->getRawOriginal($field) != $stored->getRawOriginal($field)) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.conflict')]);
+                    }
+                }
+            }
+            $saved = parent::save($options);
+            if ($saved && $sourceChanged && $confirmed) {
+                foreach ($this->lines()->orderBy('id')->lockForUpdate()->get() as $line) {
+                    app(QuantityCommitmentRecorder::class)->record($line, $this);
+                }
+            }
+
+            return $saved;
+        });
+    }
 
     public function getLogAttributeLabels(): array
     {

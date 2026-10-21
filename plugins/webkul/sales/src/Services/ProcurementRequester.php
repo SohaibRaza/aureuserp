@@ -2,9 +2,12 @@
 
 namespace Webkul\Sale\Services;
 
+use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 use Webkul\Inventory\Enums as InventoryEnums;
 use Webkul\Inventory\Facades\Inventory as InventoryFacade;
 use Webkul\Inventory\Models\Location;
+use Webkul\Inventory\Models\Packaging as InventoryPackaging;
 use Webkul\Inventory\Models\Product as InventoryProduct;
 use Webkul\Inventory\Support\ProcurementOptions;
 use Webkul\Inventory\Support\ProcurementRequest;
@@ -13,6 +16,7 @@ use Webkul\Product\Enums as ProductEnums;
 use Webkul\Sale\Enums\OrderState;
 use Webkul\Sale\Models\Order;
 use Webkul\Sale\Models\OrderLine;
+use Webkul\Support\Models\UOM;
 
 class ProcurementRequester
 {
@@ -22,6 +26,19 @@ class ProcurementRequester
             return;
         }
 
+        $lines = collect($lines);
+        (new Order)->getConnection()->transaction(function () use ($lines): void {
+            Order::query()->whereKey($lines->pluck('order_id')->unique())->orderBy('id')->lockForUpdate()->get();
+            $lockedLines = OrderLine::query()->whereKey($lines->pluck('id'))->orderBy('id')->lockForUpdate()->get();
+            InventoryProduct::withTrashed()->whereKey($lockedLines->pluck('product_id')->filter()->unique())
+                ->orderBy('id')->lockForUpdate()->get();
+
+            $this->requestForLockedLines($lockedLines);
+        });
+    }
+
+    protected function requestForLockedLines(Collection $lines): void
+    {
         $requests = collect();
 
         foreach ($lines as $line) {
@@ -31,18 +48,34 @@ class ProcurementRequester
                 continue;
             }
 
-            $alreadyProcured = $this->procuredQuantity($line, $previousProductUOMQty);
+            $snapshot = $line->currentQuantityCommitment?->data;
+            if (! $snapshot) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.unverified')]);
+            }
+            if ($snapshot['stock_unit']['id'] !== $line->product->uom_id) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.stock-unit')]);
+            }
+            $procurementUom = UOM::findOrFail($snapshot['stock_unit']['id']);
+            $procurementUom->factor = $snapshot['stock_unit']['factor'];
+            $procurementUom->rounding = $snapshot['stock_unit']['rounding'];
+            [$outgoing, $incoming] = $this->outgoingAndIncomingMoves($line, strict: false);
+            $this->assertIssuedQuantity($line, $outgoing, $incoming, $procurementUom, (float) $snapshot['stock_quantity']);
+            $quantityIn = function ($move) use ($procurementUom): float {
+                return $move->uom->computeQuantity(
+                    $move->state === InventoryEnums\MoveState::DONE ? $move->quantity : $move->product_uom_qty,
+                    $procurementUom,
+                    round: false,
+                );
+            };
+            $alreadyProcured = $outgoing->sum($quantityIn) - $incoming->sum($quantityIn);
 
-            if (float_compare($alreadyProcured, $line->product_qty, precisionDigits: 2) == 0) {
+            if (abs($alreadyProcured - $snapshot['stock_quantity']) < 0.0000001) {
                 continue;
             }
 
             $group = $this->syncProcurementGroup($line);
 
-            [$productQty, $procurementUom] = $line->uom->adjustUomQuantities(
-                $line->product_qty - $alreadyProcured,
-                $line->product->uom
-            );
+            $productQty = $snapshot['stock_quantity'] - $alreadyProcured;
 
             $requests->push($this->buildProcurementRequest($line, $productQty, $procurementUom, $this->originFor($line), $group));
         }
@@ -50,9 +83,46 @@ class ProcurementRequester
         InventoryFacade::runProcurements($requests);
     }
 
+    protected function assertIssuedQuantity(OrderLine $line, Collection $outgoing, Collection $incoming, UOM $stockUnit, float $proposedQuantity): void
+    {
+        $netIssued = 0.0;
+        foreach ($outgoing->where('state', InventoryEnums\MoveState::DONE) as $source) {
+            if ((int) $source->company_id !== (int) $line->company_id
+                || $source->uom->category_id !== $stockUnit->category_id
+                || ! is_numeric($source->quantity) || ! is_finite((float) $source->quantity)
+                || $source->quantity < 0 || ! is_finite((float) $source->uom->factor) || $source->uom->factor <= 0) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.issued-quantity')]);
+            }
+            $issued = $source->uom->computeQuantity($source->quantity, $stockUnit, round: false);
+            $returned = 0.0;
+            foreach ($incoming->where('state', InventoryEnums\MoveState::DONE) as $return) {
+                if ((int) $return->origin_returned_move_id !== (int) $source->id
+                    || (int) $return->company_id !== (int) $line->company_id
+                    || (int) $source->company_id !== (int) $line->company_id
+                    || (int) $return->product_id !== (int) $source->product_id
+                    || (int) $return->source_location_id !== (int) $source->destination_location_id
+                    || $return->destinationLocation->type !== InventoryEnums\LocationType::INTERNAL
+                    || $return->uom->category_id !== $source->uom->category_id
+                    || ! is_finite((float) $return->uom->factor) || $return->uom->factor <= 0) {
+                    continue;
+                }
+                $quantity = $return->uom->computeQuantity($return->quantity, $stockUnit, round: false);
+                if (is_finite($quantity) && $quantity > 0) {
+                    $returned += $quantity;
+                }
+            }
+            // Ambiguous or excessive historical returns do not authorize a commercial reduction.
+            $netIssued += $returned <= $issued + 0.0000001 ? max(0, $issued - $returned) : $issued;
+        }
+        if ($proposedQuantity + 0.0000001 < $netIssued) {
+            throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.issued-quantity')]);
+        }
+    }
+
     protected function needsProcurement(OrderLine $line): bool
     {
-        return $line->state === OrderState::SALE
+        return app(QuantityCommitmentRecorder::class)->applicable($line)
+            && $line->state === OrderState::SALE
             && ! $line->order->locked
             && $line->product?->type === ProductEnums\ProductType::GOODS;
     }
@@ -184,7 +254,7 @@ class ProcurementRequester
             ->warehouse($line->warehouse)
             ->partner($line->order->partner)
             ->company($line->company)
-            ->packaging($line->productPackaging)
+            ->packaging($line->product_packaging_id ? InventoryPackaging::find($line->product_packaging_id) : null)
             ->finalLocation($this->customerLocation());
     }
 

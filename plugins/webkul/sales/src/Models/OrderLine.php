@@ -7,7 +7,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Spatie\EloquentSortable\Sortable;
 use Spatie\EloquentSortable\SortableTrait;
 use Webkul\Account\Models\MoveLine;
@@ -26,6 +29,7 @@ use Webkul\Sale\Database\Factories\OrderLineFactory;
 use Webkul\Sale\Enums\OrderState;
 use Webkul\Sale\Enums\QtyDeliveredMethod;
 use Webkul\Sale\Facades\SaleOrder as SaleOrderFacade;
+use Webkul\Sale\Services\QuantityCommitmentRecorder;
 use Webkul\Security\Models\User;
 use Webkul\Support\Models\Company;
 use Webkul\Support\Models\Currency;
@@ -40,6 +44,8 @@ class OrderLine extends Model implements Sortable
     use HasFactory, SortableTrait;
 
     protected $table = 'sales_order_lines';
+
+    private bool $quietPersistence = false;
 
     protected $fillable = [
         'sort',
@@ -98,6 +104,119 @@ class OrderLine extends Model implements Sortable
         'order_column_name'  => 'sort',
         'sort_when_creating' => true,
     ];
+
+    public function quantityCommitments(): HasMany
+    {
+        return $this->hasMany(QuantityCommitment::class);
+    }
+
+    public function currentQuantityCommitment(): HasOne
+    {
+        return $this->hasOne(QuantityCommitment::class)->ofMany('revision', 'max');
+    }
+
+    public function save(array $options = []): bool
+    {
+        if (! $this->order_id) {
+            return parent::save($options);
+        }
+
+        $attributes = $this->attributes;
+        $original = $this->original;
+        $changes = $this->changes;
+        $existed = $this->exists;
+        try {
+            return $this->getConnection()->transaction(function () use ($options) {
+                $order = Order::query()->lockForUpdate()->findOrFail($this->order_id);
+                $stored = $this->exists ? static::query()->lockForUpdate()->findOrFail($this->getKey()) : null;
+                $recorder = app(QuantityCommitmentRecorder::class);
+                $significant = ! $stored || $recorder->sourceChanged($this, $stored);
+                $confirmed = $order->state === OrderState::SALE;
+
+                if ($stored && $significant && $confirmed) {
+                    foreach (QuantityCommitmentRecorder::LINE_FIELDS as $field) {
+                        if ($this->getRawOriginal($field) != $stored->getRawOriginal($field)) {
+                            throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.conflict')]);
+                        }
+                    }
+                }
+                if ($stored && $this->isDirty(['order_id', 'company_id'])
+                    && $stored->quantityCommitments()->exists()) {
+                    throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.source')]);
+                }
+                if ($confirmed && $significant) {
+                    Gate::authorize('update', $order);
+                    if ($stored && ! $recorder->applicable($this) && $stored->quantityCommitments()->exists()) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.eligibility')]);
+                    }
+                    if ($stored && ($recorder->applicable($stored) || $recorder->applicable($this)) && ! $stored->quantityCommitments()->exists()) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.unverified')]);
+                    }
+                    $recorder->validateQuantity($this->product_qty);
+                    if ($order->locked) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.locked')]);
+                    }
+                    if ($stored && $this->isDirty(['product_id', 'product_uom_id', 'product_packaging_id', 'warehouse_id', 'route_id'])
+                        && ($stored->inventoryMoves()->where('state', '!=', InventoryEnums\MoveState::CANCELED)->exists() || $stored->accountMoveLines()->exists())) {
+                        throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.delivery')]);
+                    }
+                }
+                $this->setRelation('order', $order);
+                $this->state = $confirmed ? $order->state : ($this->state ?? $order->state);
+                $saved = $this->quietPersistence
+                    ? static::withoutEvents(fn () => parent::save($options))
+                    : parent::save($options);
+                if ($saved && $confirmed && $significant) {
+                    app(QuantityCommitmentRecorder::class)->record($this, $order);
+                    SaleOrderFacade::applyInventoryRules(collect([$this]));
+                }
+
+                return $saved;
+            });
+        } catch (\Throwable $error) {
+            $this->attributes = $attributes;
+            $this->original = $original;
+            $this->changes = $changes;
+            $this->exists = $existed;
+            $this->unsetRelation('currentQuantityCommitment');
+            throw $error;
+        }
+    }
+
+    public function saveQuietly(array $options = []): bool
+    {
+        $this->quietPersistence = true;
+        try {
+            return $this->save($options);
+        } finally {
+            $this->quietPersistence = false;
+        }
+    }
+
+    protected function incrementOrDecrement($column, $amount, $extra, $method)
+    {
+        if (in_array($column, QuantityCommitmentRecorder::LINE_FIELDS, true)
+            || array_intersect(array_keys($extra), QuantityCommitmentRecorder::LINE_FIELDS)) {
+            $this->{$column} = $this->{$column} + ($method === 'increment' ? $amount : -$amount);
+            $this->forceFill($extra);
+
+            return $this->save() ? 1 : 0;
+        }
+
+        return parent::incrementOrDecrement($column, $amount, $extra, $method);
+    }
+
+    public function delete()
+    {
+        return $this->getConnection()->transaction(function () {
+            $order = Order::query()->lockForUpdate()->findOrFail($this->order_id);
+            if ($order->state === OrderState::SALE || $this->quantityCommitments()->exists()) {
+                throw ValidationException::withMessages(['products' => __('sales::models/quantity-commitment.delete')]);
+            }
+
+            return parent::delete();
+        });
+    }
 
     public function order()
     {
@@ -202,9 +321,6 @@ class OrderLine extends Model implements Sortable
         static::created(function ($orderLine) {
             $orderLine->linkMatchingOptions();
 
-            if ($orderLine->order->state === OrderState::SALE) {
-                SaleOrderFacade::applyInventoryRules(collect([$orderLine]));
-            }
         });
 
         static::updated(function ($orderLine) {
@@ -214,15 +330,6 @@ class OrderLine extends Model implements Sortable
                 $orderLine->linkMatchingOptions();
             }
 
-            if (
-                $orderLine->wasChanged('product_uom_qty')
-                && $orderLine->state === OrderState::SALE
-                && ! $orderLine->is_expense
-            ) {
-                $previousProductUomQty = [$orderLine->id => $orderLine->getOriginal('product_uom_qty')];
-
-                SaleOrderFacade::applyInventoryRules(collect([$orderLine]), previousProductUOMQty: $previousProductUomQty);
-            }
         });
     }
 
@@ -240,6 +347,10 @@ class OrderLine extends Model implements Sortable
 
     public function computeWarehouseId()
     {
+        if ($this->exists && $this->state === OrderState::SALE && ! $this->isDirty(['route_id', 'order_id'])) {
+            return;
+        }
+
         if (! Package::isPluginInstalled('inventories')) {
             return;
         }

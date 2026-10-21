@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
 use Webkul\Account\Enums\InvoicePolicy;
 use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\MoveType;
@@ -54,13 +55,11 @@ it('marks the order invoiced once an invoice is created for the full ordered qua
         ->and((float) $line->qty_to_invoice)->toBe(0.0);
 });
 
-it('returns the order to invoice when its invoice is cancelled', function () {
+it('returns the order to invoice when its draft invoice is cancelled', function () {
     $order = SaleHelper::order();
     $line = SaleHelper::line($order, $this->product, qty: 5, priceUnit: 100);
     SaleHelper::confirm($order);
     $invoice = SaleHelper::createInvoice($order);
-    SaleHelper::postInvoice($invoice);
-
     SaleHelper::cancelInvoice($invoice);
 
     expect($invoice->refresh()->state)->toBe(MoveState::CANCEL)
@@ -68,12 +67,11 @@ it('returns the order to invoice when its invoice is cancelled', function () {
         ->and($order->refresh()->invoice_status)->toBe(InvoiceStatus::TO_INVOICE);
 });
 
-it('re-invoices the order when a cancelled invoice is reset to draft', function () {
+it('re-invoices the order when a cancelled draft invoice is reset to draft', function () {
     $order = SaleHelper::order();
     $line = SaleHelper::line($order, $this->product, qty: 5, priceUnit: 100);
     SaleHelper::confirm($order);
     $invoice = SaleHelper::createInvoice($order);
-    SaleHelper::postInvoice($invoice);
     SaleHelper::cancelInvoice($invoice);
 
     SaleHelper::resetInvoiceToDraft($invoice);
@@ -106,4 +104,21 @@ it('assigns an invoice number when creating an invoice from a sale order', funct
 
     expect($invoice->refresh()->name)->not->toBeNull()
         ->and($invoice->name)->not->toBe('');
+});
+
+it('rejects posted invoice cancellation without losing Sales invoice quantities or source links', function (): void {
+    $order = SaleHelper::order();
+    $line = SaleHelper::line($order, $this->product, qty: 5, priceUnit: 100);
+    SaleHelper::confirm($order);
+    $invoice = SaleHelper::createInvoice($order);
+    SaleHelper::postInvoice($invoice);
+    $links = $line->accountMoveLines()->pluck('accounts_account_move_lines.id')->all();
+
+    expect(fn () => SaleHelper::cancelInvoice($invoice))->toThrow(ValidationException::class);
+
+    expect($invoice->refresh()->state)->toBe(MoveState::POSTED)
+        ->and($line->accountMoveLines()->pluck('accounts_account_move_lines.id')->all())->toBe($links)
+        ->and((float) $line->refresh()->qty_invoiced)->toBe(5.0)
+        ->and((float) $line->qty_to_invoice)->toBe(0.0)
+        ->and($order->refresh()->invoice_status)->toBe(InvoiceStatus::INVOICED);
 });
