@@ -28,6 +28,7 @@ use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\Security\Models\User;
 use Webkul\Support\Models\Company;
+use Webkul\Support\Services\CompanyContext;
 
 beforeEach(function (): void {
     TestBootstrapHelper::ensurePluginInstalled('accounts');
@@ -35,6 +36,7 @@ beforeEach(function (): void {
     $this->actingAs(User::query()->firstOrFail());
     config(['reconciliation.financial_mutations_enabled' => true]);
     config(['reconciliation.require_company_rollout' => false]);
+    config(['reconciliation.require_different_reviewer' => true]);
 });
 
 function u13Reconciliation(array $overrides = []): BankReconciliation
@@ -179,7 +181,14 @@ function u15ClearedPayment(string $clearing = 'full', bool $completed = false): 
         : app(MatchService::class)->createMatch($reconciliation, [$bankLine->id], [$liquidity->id], allocations: $allocations);
     if ($completed) {
         app(ReconciliationLifecycleService::class)->startReview($reconciliation->refresh());
-        app(ReconciliationLifecycleService::class)->complete($reconciliation->refresh());
+        $preparer = auth()->user();
+        actAsReconciliationReviewer((int) $reconciliation->company_id);
+        try {
+            app(ReconciliationLifecycleService::class)->complete($reconciliation->refresh());
+        } finally {
+            test()->actingAs($preparer);
+            app()->forgetInstance(CompanyContext::class);
+        }
     }
 
     return compact('invoice', 'payment', 'liquidity', 'counterpart', 'reconciliation', 'bankLine', 'match');

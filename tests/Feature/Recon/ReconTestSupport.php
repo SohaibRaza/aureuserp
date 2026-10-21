@@ -16,7 +16,7 @@ function actAsReconciliationReviewer(int $companyId): void
         'resource_permission' => 'global',
         'is_active'           => true,
     ]);
-    $reviewer->givePermissionTo('reconciliation.reopen');
+    $reviewer->givePermissionTo(['reconciliation.reopen', 'reconciliation.complete']);
     test()->actingAs($reviewer);
     app()->forgetInstance(CompanyContext::class);
 }
