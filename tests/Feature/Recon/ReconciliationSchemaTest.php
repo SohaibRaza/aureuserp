@@ -4,6 +4,7 @@ require_once __DIR__.'/ReconTestSupport.php';
 
 use App\Models\Recon\BankReconciliation;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Webkul\Support\Models\Company;
@@ -144,6 +145,77 @@ it('prevents reconciliation snapshots from being updated through direct database
     $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_09_07_000007_create_reconciliation_snapshots_table.php');
     expect(fn () => $migration->down())->toThrow(RuntimeException::class, 'forward recovery');
     expect(DB::table('recon_reconciliation_snapshots')->where('id', $snapshotId)->value('payload_hash'))->toBe(hash('sha256', 'snapshot'));
+});
+
+it('keeps snapshot JSON bytes unchanged and rejects malformed JSON', function (): void {
+    $reconciliation = BankReconciliation::query()->create(validBankReconciliationAttributes());
+    $payload = '{"z":"last key first","a":{"z":1,"a":2},"items":[3,1,2]}';
+    $attributes = [
+        'company_id'        => $this->company->id,
+        'reconciliation_id' => $reconciliation->id,
+        'version'           => 1,
+        'payload'           => $payload,
+        'payload_hash'      => hash('sha256', $payload),
+        'created_by'        => DB::table('users')->value('id'),
+        'created_at'        => now(),
+    ];
+    $id = DB::table('recon_reconciliation_snapshots')->insertGetId($attributes);
+    expect(DB::table('recon_reconciliation_snapshots')->where('id', $id)->value('payload'))->toBe($payload);
+
+    expect(fn () => DB::transaction(fn () => DB::table('recon_reconciliation_snapshots')->insert([
+        ...$attributes,
+        'version'      => 2,
+        'payload'      => '{invalid json',
+        'payload_hash' => hash('sha256', 'invalid'),
+    ])))->toThrow(QueryException::class);
+});
+
+it('upgrades empty MySQL snapshot storage but stops before changing existing history', function (): void {
+    if (DB::getDriverName() !== 'mysql') {
+        $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_10_21_000300_preserve_reconciliation_snapshot_payload_bytes.php');
+        $migration->up();
+        expect(Schema::getColumnType('recon_reconciliation_snapshots', 'payload'))->toBe('json');
+
+        return;
+    }
+
+    $original = DB::getDefaultConnection();
+    $configuration = DB::connection()->getConfig();
+    $database = 'aureuserp_snapshot_'.bin2hex(random_bytes(6)).'_testing';
+    $admin = DB::build([...$configuration, 'name' => 'snapshot_storage_admin']);
+    $identifier = $admin->getQueryGrammar()->wrap($database);
+    $admin->statement('CREATE DATABASE '.$identifier);
+    try {
+        config(['database.connections.snapshot_storage_test' => [...$configuration, 'url' => null, 'database' => $database]]);
+        DB::setDefaultConnection('snapshot_storage_test');
+        Schema::clearResolvedInstance('db.schema');
+        $createLegacyTable = function (): void {
+            Schema::create('recon_reconciliation_snapshots', function (Blueprint $table): void {
+                $table->id();
+                $table->json('payload');
+            });
+        };
+        $createLegacyTable();
+        $migration = require base_path('plugins/webkul/accounts/database/migrations/2026_10_21_000300_preserve_reconciliation_snapshot_payload_bytes.php');
+        $migration->up();
+        expect(Schema::getColumnType('recon_reconciliation_snapshots', 'payload'))->toBe('longtext')
+            ->and(fn () => DB::table('recon_reconciliation_snapshots')->insert(['payload' => 'invalid']))->toThrow(QueryException::class);
+        $migration->up();
+
+        Schema::drop('recon_reconciliation_snapshots');
+        $createLegacyTable();
+        DB::table('recon_reconciliation_snapshots')->insert(['payload' => '{"z":1,"a":2}']);
+        $before = DB::table('recon_reconciliation_snapshots')->value('payload');
+        expect(fn () => $migration->up())->toThrow(RuntimeException::class, 'do not rewrite saved hashes')
+            ->and(Schema::getColumnType('recon_reconciliation_snapshots', 'payload'))->toBe('json')
+            ->and(DB::table('recon_reconciliation_snapshots')->value('payload'))->toBe($before);
+    } finally {
+        DB::purge('snapshot_storage_test');
+        DB::setDefaultConnection($original);
+        Schema::clearResolvedInstance('db.schema');
+        $admin->statement('DROP DATABASE '.$identifier);
+        $admin->disconnect();
+    }
 });
 
 it('prevents reconciliation events from being updated or deleted through direct database access', function () {

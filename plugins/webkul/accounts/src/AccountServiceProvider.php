@@ -151,6 +151,7 @@ class AccountServiceProvider extends PackageServiceProvider
                 '2026_09_12_000002_protect_bank_opening_balance_evidence',
                 '2026_09_24_200000_add_payment_registration_results',
                 '2026_10_21_000200_add_mysql_payment_request_locks',
+                '2026_10_21_000300_preserve_reconciliation_snapshot_payload_bytes',
             ])
             ->runsMigrations()
             ->hasSettings([

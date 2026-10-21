@@ -44,6 +44,8 @@ The Accounts plugin owns the reconciliation schema and its permission migrations
 - `reconciliation_rollouts`: company enablement, attestations, disable history.
 - `recon_bank_opening_balances`: one-time company-bank opening-balance provenance linked to the posted move.
 
+Snapshot hashes cover the JSON serialization captured at completion. PostgreSQL stores the payload as `json`; MySQL stores it as JSON-validated text because native MySQL JSON changes object-key order. Neither engine may update or delete a saved snapshot. A forward migration converts an existing empty MySQL snapshot table. If it contains history, the migration stops for evidence review: changing the column cannot recover the original serialization, and saved hashes must not be rewritten to hide a mismatch.
+
 ## Write sequence
 
 All material writes follow this order:

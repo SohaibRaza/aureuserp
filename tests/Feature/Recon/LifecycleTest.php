@@ -16,6 +16,7 @@ beforeEach(function (): void {
     $this->actingAs(User::query()->firstOrFail());
     config()->set('reconciliation.financial_mutations_enabled', true);
     config()->set('reconciliation.require_company_rollout', false);
+    config()->set('reconciliation.require_different_reviewer', true);
 });
 
 function lifecycleRecon(array $overrides = []): BankReconciliation
@@ -78,6 +79,7 @@ it('retains immutable snapshots after an approved reopen and records ordered aud
     $service = app(ReconciliationLifecycleService::class);
 
     $service->requestReopen($reconciliation, 'Correct September evidence');
+    actAsReconciliationReviewer((int) $reconciliation->company_id);
     $service->reopen($reconciliation->refresh(), 'Approved historical correction');
     $events = $reconciliation->refresh()->events()->get();
 

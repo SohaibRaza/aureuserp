@@ -31,6 +31,7 @@ beforeEach(function (): void {
     URL::resolveMissingNamedRoutesUsing(fn () => '#');
     config()->set('reconciliation.financial_mutations_enabled', true);
     config()->set('reconciliation.require_company_rollout', false);
+    config()->set('reconciliation.require_different_reviewer', true);
 });
 
 function tryPeriodBoundaryLock(Connection $connection, int $companyId, bool $exclusive = false): bool
@@ -105,6 +106,7 @@ it('keeps a pending reopen request closed until approved', function (): void {
     expect(fn () => app(MoveWorkflow::class)->post($move))->toThrow(ValidationException::class)
         ->and($move->fresh()->state->value)->toBe('draft');
 
+    actAsReconciliationReviewer((int) $requested->company_id);
     $lifecycle->reopen($requested, 'Approved correction');
     expect(app(MoveWorkflow::class)->post($move)->state->value)->toBe('posted');
 });

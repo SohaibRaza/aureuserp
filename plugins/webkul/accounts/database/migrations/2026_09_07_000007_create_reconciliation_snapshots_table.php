@@ -15,7 +15,12 @@ return new class extends Migration
             $table->foreignId('company_id')->constrained('companies')->restrictOnDelete();
             $table->foreignId('reconciliation_id')->constrained('recon_bank_reconciliations')->restrictOnDelete();
             $table->unsignedInteger('version');
-            $table->json('payload');
+            if (DB::getDriverName() === 'mysql') {
+                // Native MySQL JSON reorders object keys and breaks the recorded byte hash.
+                $table->longText('payload');
+            } else {
+                $table->json('payload');
+            }
             $table->char('payload_hash', 64);
             $table->foreignId('created_by')->constrained('users')->restrictOnDelete();
             $table->timestamp('created_at')->useCurrent();
@@ -25,6 +30,7 @@ return new class extends Migration
         });
 
         if (DB::getDriverName() === 'mysql') {
+            DB::statement('ALTER TABLE recon_reconciliation_snapshots ADD CONSTRAINT recon_snapshot_payload_json_check CHECK (JSON_VALID(payload))');
             ImmutableHistory::protect('recon_reconciliation_snapshots');
 
             return;

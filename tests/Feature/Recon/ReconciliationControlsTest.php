@@ -33,6 +33,7 @@ beforeEach(function (): void {
     $this->actingAs(User::query()->firstOrFail());
     config()->set('reconciliation.financial_mutations_enabled', true);
     config()->set('reconciliation.require_company_rollout', false);
+    config()->set('reconciliation.require_different_reviewer', true);
 });
 
 function controlledReconciliation(array $overrides = []): BankReconciliation
@@ -283,6 +284,7 @@ it('completes atomically with an immutable snapshot and makes later periods stal
     ]);
     $impact = app(ReconciliationLifecycleService::class)->previewReopenImpact($completed);
     app(ReconciliationLifecycleService::class)->requestReopen($completed, 'Correct September evidence');
+    actAsReconciliationReviewer((int) $completed->company_id);
     app(ReconciliationLifecycleService::class)->reopen($completed->refresh(), 'Approved historical correction');
 
     expect($snapshot->payload['calculation']['difference'])->toBe('0.00')

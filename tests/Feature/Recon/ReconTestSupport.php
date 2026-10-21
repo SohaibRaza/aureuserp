@@ -3,6 +3,23 @@
 use Illuminate\Support\Facades\DB;
 use Webkul\Account\Models\Account;
 use Webkul\Account\Models\Journal;
+use Webkul\Security\Models\User;
+use Webkul\Support\Services\CompanyContext;
+
+function actAsReconciliationReviewer(int $companyId): void
+{
+    $reviewer = User::query()->create([
+        'name'                => 'Independent reconciliation reviewer',
+        'email'               => fake()->unique()->safeEmail(),
+        'password'            => 'synthetic-reviewer-password',
+        'default_company_id'  => $companyId,
+        'resource_permission' => 'global',
+        'is_active'           => true,
+    ]);
+    $reviewer->givePermissionTo('reconciliation.reopen');
+    test()->actingAs($reviewer);
+    app()->forgetInstance(CompanyContext::class);
+}
 
 function validBankReconciliationAttributes(?Journal $journal = null): array
 {
