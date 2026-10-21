@@ -12,7 +12,7 @@ class ProductSettings extends Settings
 
     public bool $enable_packagings;
 
-    public bool $enable_price_lists;
+    public bool $enable_price_lists = false;
 
     public static function group(): string
     {
