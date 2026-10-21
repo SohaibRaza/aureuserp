@@ -43,7 +43,7 @@ These families define required persisted meaning. Physical tables may combine cl
 4. Bounded backfill: use stable primary-key windows, resumable checkpoints and row counts/hashes; do not hold operational locks for a full historical table.
 5. Dual-read only when necessary and time-bounded; name the retirement criterion. Avoid dual-write unless both writes share one transaction and invariant.
 6. Forward correction over history rewrite: opening/adoption records reference existing native effects and physical position.
-7. PostgreSQL is the project database baseline under [ADR 0007](../../adr/0007-postgresql-project-baseline.md). Prove identity, constraints and transaction behavior on the recorded PostgreSQL version; other engines are not acceptance targets.
+7. PostgreSQL is primary and MySQL is also supported under [ADR 0008](../../adr/0008-postgresql-primary-and-mysql-support.md). Prove identity, constraints and transaction behavior on both recorded engine versions. PostgreSQL-specific SQL below describes the current implementation, not a MySQL implementation; reviewed equivalents and MySQL tests are still required.
 8. Rollback preserves facts: code rollback may disable new commands, but migrations containing actual business history are not destructively rolled back.
 
 ## Required physical schema specification
@@ -53,7 +53,7 @@ The persistence families above define business meaning; they are not permission 
 - exact table and model names, owning module and business purpose;
 - every column's database type, precision, nullability, default and whether it is mutable after use;
 - foreign keys, deletion behavior and the treatment of parent or source removal;
-- unique, check and lookup indexes, with verified PostgreSQL behavior;
+- unique, check and lookup indexes, with verified PostgreSQL and MySQL behavior;
 - the records and transitions that require transaction locks;
 - legacy classification, backfill source, checkpoint and reconciliation totals;
 - compatible application versions for expand, activate and contract steps; and

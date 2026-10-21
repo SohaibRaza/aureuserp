@@ -6,7 +6,7 @@ date: 2026-09-20
 
 # Logistics Testing and Acceptance Strategy
 
-PostgreSQL is the sole project database acceptance target under [ADR 0007](../../adr/0007-postgresql-project-baseline.md). Record the exact tested version. Historical exploratory results on other engines do not add release gates.
+PostgreSQL is primary and MySQL is also a supported target under [ADR 0008](../../adr/0008-postgresql-primary-and-mysql-support.md), approved on 2026-10-21. Verify affected shared database behavior on both engines and record the exact tested versions separately. Existing PostgreSQL results do not establish MySQL compatibility. The current PostgreSQL-specific implementation needs MySQL equivalents before dual-engine acceptance can pass.
 
 ## Evidence classes
 
@@ -33,8 +33,8 @@ P0 establishes the durable evidence registry. Unless an approved evidence system
 | V2 | Domain/unit | Quantity conservation, pack snapshots, transition guards, rounding and scope calculations. |
 | V3 | Service/feature | Shared commands and persisted effects; rejected commands assert zero side effects. |
 | V4 | Native-owner regression | Actual API, Filament, Barcode, Manufacturing/direct-service and Accounts entry points around owner changes. |
-| V5 | Transaction/failure injection | Operation-two, listener, storage association and outer-transaction failures roll back the correct boundary; migration failure leaves explainable PostgreSQL schema and ledger state and resumes only through verified forward recovery. |
-| V6 | True concurrency/engine | Independent processes/connections, shared committed fixture, controlled barrier and fresh-connection assertions on PostgreSQL. Pest parallel mode alone is insufficient. |
+| V5 | Transaction/failure injection | Operation-two, listener, storage association and outer-transaction failures roll back the correct boundary; migration failure leaves explainable schema and ledger state on each supported engine and resumes only through verified forward recovery. |
+| V6 | True concurrency/engine | Independent processes/connections, shared committed fixture, controlled barrier and fresh-connection assertions on PostgreSQL and MySQL. Pest parallel mode alone is insufficient. |
 | V7 | Replay/integration | Same request, changed payload, lost response, stale revision, out-of-order event, unknown outcome, correction and reversal. |
 | V8 | Security/access | Negative permission, cross-company/parent-child, separate admin/auditor duties, support/import/export/evidence access, replay after revocation, idempotency collision/enumeration/preemption, unsafe uploads and effective audit-history update/delete denial. |
 | V9 | Browser/operator | Keyboard and call-assisted work, actionable errors, documents/reprints, primary/backup queue handover. |
@@ -47,7 +47,7 @@ P0 establishes the durable evidence registry. Unless an approved evidence system
 - AE1. Two planners claim 60 each against 100 eligible units: both cannot retain 60; 60+40 can succeed.
 - AE2. Dispatch 40 of 100 and create a native 60 backorder: successor lineage maps once and unselected lines remain unposted.
 - AE3. A 6x12 commitment precedes a 6x18 master change: historical commitment remains 6x12; actual repack is a new approved fact.
-- AE4. Two concurrent writers try to create the same Inventory balance record when optional lot, package or owner fields are empty: exactly one balance identity remains on PostgreSQL.
+- AE4. Two concurrent writers try to create the same Inventory balance record when optional lot, package or owner fields are empty: exactly one balance identity remains on PostgreSQL and MySQL.
 - AE5. An unknown lot, unsupported fractional pack or wrong-category UoM is not treated as a wildcard, full quantity or zero.
 
 ### Release and physical execution
@@ -92,8 +92,8 @@ P0 establishes the durable evidence registry. Unless an approved evidence system
 | Phase | Minimum gates |
 | --- | --- |
 | P0 | V1, isolated V3 baseline |
-| P1A | V2-V7 on PostgreSQL, including every native writer |
-| P1B | V2-V7 on PostgreSQL and Recon integration |
+| P1A | V2-V7 on PostgreSQL and MySQL, including every native writer |
+| P1B | V2-V7 on PostgreSQL and MySQL and Recon integration |
 | P2 | V3, V5, V7, V8 |
 | P3 | V2-V4, V6-V9 |
 | P4 | V2-V8, V10 recovery cases |
@@ -108,9 +108,9 @@ The phase owner stores these artifacts with the execution record defined above. 
 
 | Phase and units | Exact verification | Required acceptance artifact | Required approvers | Blocking defects |
 | --- | --- | --- | --- | --- |
-| P0 — U1, U2 qualification, U14 diagnosis | V1 and isolated V3; current baseline plus all-mode paper/basic-phone walkthroughs. | Revision and local-diff record, PostgreSQL version and configuration inventory, complete caller/lock map, baseline failures, representative documents, decision-owner register and walkthrough record. | Technical lead plus Sales, Inventory, Accounts, warehouse and operations owners for their facts. | Unexplained baseline failure; missing writer; unknown engine/version; no owner or evidence plan for a blocking decision. |
-| P1A — U3-U5 | V2-V7; AE1-AE2, AE4, AE6, AE8-AE9 and AE18 on PostgreSQL. | Approved physical schema specification, duplicate preflight, transaction/lock diagram, every-writer matrix, persisted-state assertions and onsite-correction evidence. | Inventory technical owner and Inventory/Sales business owners; quality owner for return disposition. | Duplicate or lost stock effect; writer bypass; partial operation; unproven missing-balance identity; correction represented as customer return. |
-| P1B — U14-U15 | V2-V7; AE19-AE22 and restore uncertainty from AE28 on PostgreSQL. | Corrected reconciliation fixtures, Accounts schema/command specifications, journal/reconciliation traces, recipient authority, race/lost-response/reversal evidence. | Controller or delegated Accounts owner plus Accounts technical owner and independent reviewer. | Wrong or duplicate financial effect; unexplained residual; fixture with incorrect economic direction; supplier/recipient ambiguity; blind retry after uncertainty. |
+| P0 — U1, U2 qualification, U14 diagnosis | V1 and isolated V3; current baseline plus all-mode paper/basic-phone walkthroughs. | Revision and local-diff record, database engine/version and configuration inventory, complete caller/lock map, baseline failures, representative documents, decision-owner register and walkthrough record. | Technical lead plus Sales, Inventory, Accounts, warehouse and operations owners for their facts. | Unexplained baseline failure; missing writer; unknown engine/version; no owner or evidence plan for a blocking decision. |
+| P1A — U3-U5 | V2-V7; AE1-AE2, AE4, AE6, AE8-AE9 and AE18 on PostgreSQL and MySQL. | Approved physical schema specification, duplicate preflight, transaction/lock diagram, every-writer matrix, persisted-state assertions and onsite-correction evidence. | Inventory technical owner and Inventory/Sales business owners; quality owner for return disposition. | Duplicate or lost stock effect; writer bypass; partial operation; unproven missing-balance identity; correction represented as customer return. |
+| P1B — U14-U15 | V2-V7; AE19-AE22 and restore uncertainty from AE28 on PostgreSQL and MySQL. | Corrected reconciliation fixtures, Accounts schema/command specifications, journal/reconciliation traces, recipient authority, race/lost-response/reversal evidence. | Controller or delegated Accounts owner plus Accounts technical owner and independent reviewer. | Wrong or duplicate financial effect; unexplained residual; fixture with incorrect economic direction; supplier/recipient ambiguity; blind retry after uncertainty. |
 | P2 — U2, U7-U8 | V3, V5, V7 and V8; AE23-AE24. | Control/evidence/command schema and contracts, suspension race result, evidence byte/SQL failure matrix, access negatives, retention and restore approval. | Operations control owner, data/privacy owner, security reviewer and technical owner. | Activity crosses cutoff; replay bypasses access; accepted record lacks verifiable evidence; audit/control history is mutable. |
 | P3 — U6, U9-U10 | V2-V4 and V6-V9; AE1-AE5. | Approved Q1/Q4/Q6 and Q13 applicability records, Sales/Logistics schema specifications, source-lineage and claim proof, verified-load walkthrough and phone-booking record. | Sales, Product/UoM, warehouse, operations and Inventory owners. | Historical meaning inferred from current master data; excess claim; unsupported conversion; load cannot explain native remainder. |
 | P4 — U11-U13 | V2-V8 plus applicable V10 recovery; AE6-AE18. | Release/receipt/cargo command and schema specifications, atomic issue proof, gate race result, receipt reconciliation set, cargo conservation and correction-dependency report. | Warehouse/Inventory, dispatch, receipt reconciliation, quality and operations owners. | Partial issue; stale authority succeeds; receipt creates stock; overlapping cargo; invented attribution; unbounded correction. |

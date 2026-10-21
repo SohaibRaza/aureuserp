@@ -23,7 +23,7 @@ Recommendations and examples from either source pack are not company policy unle
 
 Current manual practice is evidence of business needs, constraints and exceptions; it is not automatically a requirement to preserve the same workflow. Evaluate spreadsheet steps and workarounds critically. The target may simplify, automate or replace them while preserving validated business outcomes and necessary controls. The same principle applies to existing AureusERP behavior.
 
-PostgreSQL is the project database baseline under [ADR 0007](../../adr/0007-postgresql-project-baseline.md). Use it for migration, transaction, concurrency and release acceptance; other-engine compatibility is not an implicit requirement.
+PostgreSQL is primary, and MySQL is also a supported target under [ADR 0008](../../adr/0008-postgresql-primary-and-mysql-support.md), approved on 2026-10-21. Verify affected migrations, transactions, concurrency and release behavior on both engines. Existing PostgreSQL-only evidence does not establish MySQL compatibility; the ADR lists the known portability gaps. This decision supersedes older PostgreSQL-only instructions without rewriting historical test results.
 
 ## Terms used throughout the plan
 

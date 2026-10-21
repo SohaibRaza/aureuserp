@@ -24,7 +24,8 @@ Status values are `Proposed`, `Accepted`, `Superseded`, or `Deprecated`. An acce
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0007](0007-postgresql-project-baseline.md) | Use PostgreSQL as the project database and acceptance baseline | Accepted |
+| [0007](0007-postgresql-project-baseline.md) | Use PostgreSQL as the project database and acceptance baseline | Superseded by 0008 |
+| [0008](0008-postgresql-primary-and-mysql-support.md) | Keep PostgreSQL primary and support MySQL with equivalent integrity controls | Accepted; MySQL compatibility verification pending |
 
 ## Logistics domain decisions
 

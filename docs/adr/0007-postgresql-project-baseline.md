@@ -1,6 +1,6 @@
 # ADR 0007: PostgreSQL is the AureusERP project database baseline
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0008](0008-postgresql-primary-and-mysql-support.md) on 2026-10-21
 - **Date:** 2026-09-24
 - **Decision owner:** AureusERP project owner
 

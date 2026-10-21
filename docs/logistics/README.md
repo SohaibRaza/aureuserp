@@ -40,7 +40,7 @@ Current manual practice is evidence of business needs, constraints and exception
 - Keep unresolved policy in [`plan/12-OPEN-DECISIONS.md`](plan/12-OPEN-DECISIONS.md) with an owner, required evidence, and the phases it blocks.
 - Recheck repository paths, versions, and line references before using dated audit material in a code change.
 
-PostgreSQL is the project database baseline under [ADR 0007](../adr/0007-postgresql-project-baseline.md). The canonical plan uses PostgreSQL acceptance; older exploratory results on other engines remain historical evidence only.
+PostgreSQL remains the primary database. MySQL is also a supported target under [ADR 0008](../adr/0008-postgresql-primary-and-mysql-support.md), approved on 2026-10-21. Affected shared migrations and workflows need equivalent integrity guarantees and verification on both engines. Existing PostgreSQL results remain valid only for their recorded engine; MySQL portability and acceptance are still pending.
 
 ## Current P0 evidence
 
