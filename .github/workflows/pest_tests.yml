@@ -15,7 +15,7 @@ jobs:
       DB_CONNECTION: ${{ matrix.db }}
       DB_HOST: 127.0.0.1
       DB_PORT: ${{ matrix.db-port }}
-      DB_DATABASE: aureuserp_testing
+      DB_DATABASE: aureuserp_ci_testing
       DB_USERNAME: ${{ matrix.db-user }}
       DB_PASSWORD: ${{ matrix.db-password }}
       AUREUSERP_RUN_CONCURRENCY_TEST: 1
@@ -52,10 +52,10 @@ jobs:
         image: ${{ matrix.db-image }}
         env:
           MYSQL_ROOT_PASSWORD: ${{ matrix.db-password }}
-          MYSQL_DATABASE: aureuserp_testing
+          MYSQL_DATABASE: aureuserp_ci_testing
           POSTGRES_USER: ${{ matrix.db-user }}
           POSTGRES_PASSWORD: ${{ matrix.db-password }}
-          POSTGRES_DB: aureuserp_testing
+          POSTGRES_DB: aureuserp_ci_testing
         ports:
           - ${{ matrix.db-port }}:${{ matrix.db-port }}
         options: --health-cmd="${{ matrix.db-health }}" --health-interval=10s --health-timeout=5s --health-retries=5
