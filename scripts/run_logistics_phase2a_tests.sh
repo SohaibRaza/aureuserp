@@ -4,6 +4,25 @@ set -Eeuo pipefail
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TEMPORARY_ROOT="$(cd /tmp && pwd -P)"
+ENGINE=pgsql
+ARGS=()
+while (( $# > 0 )); do
+    case "$1" in
+        --engine=pgsql|--engine=postgres|--engine=postgresql) ENGINE=pgsql; shift ;;
+        --engine=mysql) ENGINE=mysql; shift ;;
+        --engine)
+            (( $# >= 2 )) || { echo "--engine requires pgsql or mysql" >&2; exit 1; }
+            case "$2" in
+                pgsql|postgres|postgresql) ENGINE=pgsql ;;
+                mysql) ENGINE=mysql ;;
+                *) echo "Unsupported engine: $2" >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
 TASK_ROOT="$(mktemp -d /tmp/aureus-p2a.XXXXXX)"
 TASK_ROOT="$(cd "${TASK_ROOT}" && pwd -P)"
 CLUSTER_ROOT="${TASK_ROOT}/postgres"
@@ -14,6 +33,13 @@ DATABASE="aureuserp_$(date -u +%Y%m%d%H%M%S)_$$_testing"
 DATABASE_USER="aureuserp_test_runner"
 DATABASE_PORT=5432
 POSTGRES_LOG="${TASK_ROOT}/postgres.log"
+MYSQL_DATA_ROOT="${TASK_ROOT}/mysql"
+MYSQL_LOG="${TASK_ROOT}/mysql.log"
+MYSQL_PID_FILE="${TASK_ROOT}/mysql.pid"
+MYSQL_SOCKET="${SOCKET_ROOT}/mysql.sock"
+MYSQL_PASSWORD='aureus-test-only'
+MYSQL_SERVER_PROCESS_PID=''
+PHP_BIN="${PHP_BIN:-php}"
 
 DEFAULT_TESTS=(
     plugins/webkul/support/tests/Feature/Workflows/TestBootstrapPluginPathTest.php
@@ -41,7 +67,7 @@ owns_task_root()
     [[ -n "${TASK_ROOT:-}" ]]
     [[ "${TASK_ROOT}" == "${TEMPORARY_ROOT}"/aureus-p2a.* ]]
     [[ -f "${MARKER}" ]]
-    [[ "$(<"${MARKER}")" == "${TASK_ROOT}" ]]
+    [[ "$(<"${MARKER}")" == "${TASK_ROOT}|${ENGINE}" ]]
 }
 
 cleanup()
@@ -50,16 +76,21 @@ cleanup()
     trap - EXIT INT TERM
 
     if ! owns_task_root; then
-        echo "Cleanup refused because the task-owned marker or PostgreSQL identity is missing: ${TASK_ROOT}" >&2
+        echo "Cleanup refused because the task-owned marker or resource identity is missing: ${TASK_ROOT}" >&2
         exit 70
     fi
 
-    if (( status != 0 )) && [[ -s "${POSTGRES_LOG}" ]]; then
+    if (( status != 0 )) && [[ "${ENGINE}" == pgsql && -s "${POSTGRES_LOG}" ]]; then
         echo "PostgreSQL diagnostic tail (synthetic disposable cluster):" >&2
         tail -n 40 "${POSTGRES_LOG}" >&2
     fi
 
-    if [[ -f "${CLUSTER_ROOT}/PG_VERSION" ]] && pg_ctl -D "${CLUSTER_ROOT}" status >/dev/null 2>&1; then
+    if (( status != 0 )) && [[ "${ENGINE}" == mysql && -s "${MYSQL_LOG}" ]]; then
+        echo "MySQL diagnostic tail (synthetic disposable server):" >&2
+        tail -n 100 "${MYSQL_LOG}" >&2
+    fi
+
+    if [[ "${ENGINE}" == pgsql && -f "${CLUSTER_ROOT}/PG_VERSION" ]] && pg_ctl -D "${CLUSTER_ROOT}" status >/dev/null 2>&1; then
         local actual_data_root
         actual_data_root="$(psql -XAt -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -d postgres -c "SHOW data_directory" 2>/dev/null || true)"
 
@@ -71,19 +102,54 @@ cleanup()
         pg_ctl -D "${CLUSTER_ROOT}" -m fast stop >/dev/null
     fi
 
+    if [[ "${ENGINE}" == mysql ]]; then
+        local mysql_pid mysql_identity mysql_data_root mysql_socket mysql_skip_networking mysql_version
+        mysql_pid="${MYSQL_SERVER_PROCESS_PID}"
+        if [[ -z "${mysql_pid}" && -f "${MYSQL_PID_FILE}" ]]; then
+            mysql_pid="$(<"${MYSQL_PID_FILE}")"
+        fi
+        if [[ "${mysql_pid}" =~ ^[0-9]+$ ]] && kill -0 "${mysql_pid}" 2>/dev/null; then
+            mysql_identity="$(mysql --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" -uroot -Nse \
+                "SELECT CONCAT_WS('|', @@datadir, @@socket, @@skip_networking, VERSION())" 2>/dev/null || true)"
+            IFS='|' read -r mysql_data_root mysql_socket mysql_skip_networking mysql_version <<< "${mysql_identity}"
+            [[ "${mysql_data_root}" == "${MYSQL_DATA_ROOT}/" && "${mysql_socket}" == "${MYSQL_SOCKET}" \
+                && "${mysql_skip_networking}" == 1 && "${mysql_version}" == 8.0.* ]] || {
+                echo "Cleanup refused because the running MySQL identity or version changed: ${TASK_ROOT}" >&2
+                exit 70
+            }
+            mysqladmin --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" -uroot shutdown >/dev/null
+        fi
+    fi
+
     find "${TASK_ROOT}" -depth -delete
     exit "${status}"
 }
 
 chmod 0700 "${TASK_ROOT}"
-printf '%s\n' "${TASK_ROOT}" > "${MARKER}"
+printf '%s\n' "${TASK_ROOT}|${ENGINE}" > "${MARKER}"
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command in git php initdb pg_ctl createdb psql realpath; do
+for command in git realpath; do
     command -v "${command}" >/dev/null || fail "required command not found: ${command}"
 done
+PHP_BIN="$(command -v "${PHP_BIN}")" || fail "PHP 8.4 executable not found"
+[[ -x "${PHP_BIN}" ]] || fail "PHP 8.4 executable not found: ${PHP_BIN}"
+[[ "$("${PHP_BIN}" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')" == 8.4 ]] || fail "runner requires PHP 8.4"
+
+if [[ "${ENGINE}" == pgsql ]]; then
+    for command in initdb pg_ctl createdb psql; do
+        command -v "${command}" >/dev/null || fail "required command not found: ${command}"
+    done
+else
+    for command in mysqld mysql mysqladmin; do
+        command -v "${command}" >/dev/null || fail "required command not found: ${command}"
+    done
+    MYSQL_SERVER_VERSION="$(mysqld --no-defaults --version 2>&1)"
+    [[ "${MYSQL_SERVER_VERSION}" == *"Ver 8.0."* && "${MYSQL_SERVER_VERSION}" != *MariaDB* ]] \
+        || fail "--engine=mysql requires MySQL 8.0; found ${MYSQL_SERVER_VERSION}"
+fi
 
 [[ "$(git -C "${REPOSITORY_ROOT}" rev-parse --show-toplevel)" == "${REPOSITORY_ROOT}" ]] \
     || fail "script is not running from the expected repository root"
@@ -120,21 +186,56 @@ mkdir -p "${STORAGE_ROOT}/framework/cache" "${STORAGE_ROOT}/framework/sessions" 
     "${STORAGE_ROOT}/framework/testing/views" "${STORAGE_ROOT}/logs" \
     "${STORAGE_ROOT}/app/private" "${STORAGE_ROOT}/app/public"
 
-initdb -D "${CLUSTER_ROOT}" -U postgres --auth-local=trust --auth-host=reject --no-locale --encoding=UTF8 >/dev/null
-pg_ctl -D "${CLUSTER_ROOT}" -l "${POSTGRES_LOG}" \
-    -o "-k ${SOCKET_ROOT} -p ${DATABASE_PORT} -c listen_addresses=''" start >/dev/null
+if [[ "${ENGINE}" == pgsql ]]; then
+    initdb -D "${CLUSTER_ROOT}" -U postgres --auth-local=trust --auth-host=reject --no-locale --encoding=UTF8 >/dev/null
+    pg_ctl -D "${CLUSTER_ROOT}" -l "${POSTGRES_LOG}" \
+        -o "-k ${SOCKET_ROOT} -p ${DATABASE_PORT} -c listen_addresses=''" start >/dev/null
 
-psql -Xv ON_ERROR_STOP=1 -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -d postgres \
-    -c "CREATE ROLE ${DATABASE_USER} LOGIN" >/dev/null
-createdb -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -O "${DATABASE_USER}" "${DATABASE}"
+    psql -Xv ON_ERROR_STOP=1 -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -d postgres \
+        -c "CREATE ROLE ${DATABASE_USER} LOGIN CREATEDB" >/dev/null
+    createdb -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -O "${DATABASE_USER}" "${DATABASE}"
 
-SERVER_IDENTITY="$(psql -XAt -F '|' -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -d postgres \
-    -c "SELECT current_setting('data_directory'), inet_server_addr() IS NULL")"
-CLIENT_IDENTITY="$(psql -XAt -F '|' -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U "${DATABASE_USER}" -d "${DATABASE}" \
-    -c "SELECT current_database(), current_user")"
+    SERVER_IDENTITY="$(psql -XAt -F '|' -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U postgres -d postgres \
+        -c "SELECT current_setting('data_directory'), inet_server_addr() IS NULL")"
+    CLIENT_IDENTITY="$(psql -XAt -F '|' -h "${SOCKET_ROOT}" -p "${DATABASE_PORT}" -U "${DATABASE_USER}" -d "${DATABASE}" \
+        -c "SELECT current_database(), current_user")"
 
-[[ "${SERVER_IDENTITY}" == "${CLUSTER_ROOT}|t" && "${CLIENT_IDENTITY}" == "${DATABASE}|${DATABASE_USER}" ]] \
-    || fail "private PostgreSQL identity did not match the task-owned resource"
+    [[ "${SERVER_IDENTITY}" == "${CLUSTER_ROOT}|t" && "${CLIENT_IDENTITY}" == "${DATABASE}|${DATABASE_USER}" ]] \
+        || fail "private PostgreSQL identity did not match the task-owned resource"
+else
+    mkdir -m 0700 "${MYSQL_DATA_ROOT}"
+    MYSQL_SERVER_BIN="$(realpath "$(command -v mysqld)")"
+    MYSQL_BASEDIR="$(cd "$(dirname "${MYSQL_SERVER_BIN}")/.." && pwd -P)"
+    mysqld --no-defaults --initialize-insecure --basedir="${MYSQL_BASEDIR}" --datadir="${MYSQL_DATA_ROOT}" --user="$(id -un)" >/dev/null 2>&1
+    mysqld --no-defaults --basedir="${MYSQL_BASEDIR}" --datadir="${MYSQL_DATA_ROOT}" --user="$(id -un)" \
+        --socket="${MYSQL_SOCKET}" --pid-file="${MYSQL_PID_FILE}" --log-error="${MYSQL_LOG}" \
+        --skip-networking --skip-log-bin --mysqlx=0 --transaction-isolation=READ-COMMITTED &
+    MYSQL_SERVER_PROCESS_PID=$!
+    for _ in {1..60}; do
+        if mysql --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" -uroot -Nse 'SELECT 1' >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
+    MYSQL_SERVER_IDENTITY="$(mysql --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" -uroot -Nse \
+        "SELECT CONCAT_WS('|', @@datadir, @@socket, @@skip_networking, VERSION(), @@GLOBAL.transaction_isolation)")"
+    IFS='|' read -r actual_data_root actual_socket skip_networking mysql_version default_isolation <<< "${MYSQL_SERVER_IDENTITY}"
+    [[ "${actual_data_root}" == "${MYSQL_DATA_ROOT}/" && "${actual_socket}" == "${MYSQL_SOCKET}" \
+        && "${skip_networking}" == 1 && "${mysql_version}" == 8.0.* && "${default_isolation}" == READ-COMMITTED ]] \
+        || fail "private MySQL identity/version/isolation check failed: ${MYSQL_SERVER_IDENTITY}"
+    mysql --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" -uroot <<SQL
+CREATE DATABASE \`${DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER '${DATABASE_USER}'@'localhost' IDENTIFIED BY '${MYSQL_PASSWORD}';
+GRANT ALL PRIVILEGES ON \`aureuserp\_%\_testing\`.* TO '${DATABASE_USER}'@'localhost';
+GRANT PROCESS ON *.* TO '${DATABASE_USER}'@'localhost';
+GRANT SELECT ON performance_schema.* TO '${DATABASE_USER}'@'localhost';
+SQL
+    CLIENT_IDENTITY="$(mysql --no-defaults --protocol=SOCKET --socket="${MYSQL_SOCKET}" \
+        -u"${DATABASE_USER}" -p"${MYSQL_PASSWORD}" "${DATABASE}" -Nse "SELECT CONCAT_WS('|', DATABASE(), CURRENT_USER())")"
+    [[ "${CLIENT_IDENTITY}" == "${DATABASE}|${DATABASE_USER}@localhost" ]] \
+        || fail "private MySQL client identity did not match the task-owned resource"
+fi
 [[ "${DATABASE}" == aureuserp_*_testing ]] \
     || fail "generated database name does not satisfy the _testing guard"
 
@@ -142,7 +243,7 @@ export APP_ENV=testing
 export APP_DEBUG=false
 export APP_KEY='base64:YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE='
 export APP_URL='http://localhost'
-export DB_CONNECTION=pgsql
+export DB_CONNECTION="${ENGINE}"
 export AUREUSERP_TEST_REUSE_DATABASE=0
 export TEST_TOKEN=
 export DB_URL=
@@ -152,6 +253,12 @@ export DB_PORT="${DATABASE_PORT}"
 export DB_DATABASE="${DATABASE}"
 export DB_USERNAME="${DATABASE_USER}"
 export DB_PASSWORD=''
+if [[ "${ENGINE}" == mysql ]]; then
+    export DB_SOCKET="${MYSQL_SOCKET}"
+    export DB_HOST=localhost
+    export DB_PORT=3306
+    export DB_PASSWORD="${MYSQL_PASSWORD}"
+fi
 export LARAVEL_STORAGE_PATH="${STORAGE_ROOT}"
 export VIEW_COMPILED_PATH="${STORAGE_ROOT}/framework/testing/views"
 export APP_CONFIG_CACHE="${TASK_ROOT}/cache/config.php"
@@ -174,33 +281,48 @@ export AUREUSERP_RUN_CONCURRENCY_TEST=1
 mkdir -p "${TASK_ROOT}/cache"
 
 cd "${REPOSITORY_ROOT}"
-APPLICATION_IDENTITY="$(php -d memory_limit=512M -r '
+if ! APPLICATION_IDENTITY="$("${PHP_BIN}" -d memory_limit=512M -r '
 require "vendor/autoload.php";
 $app = require "bootstrap/app.php";
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 $connection = Illuminate\Support\Facades\DB::connection();
-$identity = $connection->selectOne("SELECT current_database() AS database, current_user AS username, inet_server_addr() IS NULL AS local_socket");
+$identity = $connection->getDriverName() === "pgsql"
+    ? $connection->selectOne("SELECT current_database() AS db_name, current_user AS db_user, inet_server_addr() IS NULL AS socket_only")
+    : $connection->selectOne("SELECT DATABASE() AS db_name, CURRENT_USER() AS db_user, @@socket AS socket_path, @@skip_networking AS socket_only, @@session.transaction_isolation AS isolation_level, @@session.time_zone AS session_timezone");
+$socketOnly = $identity->socket_only;
+$host = $connection->getDriverName() === "pgsql" ? config("database.connections.pgsql.host") : $identity->socket_path;
 echo implode("|", [
     $app->environment(),
     $connection->getDriverName(),
-    $identity->database,
-    $identity->username,
-    $identity->local_socket ? "socket" : "tcp",
-    config("database.connections.pgsql.host"),
+    $identity->db_name,
+    $identity->db_user,
+    $socketOnly ? "socket" : "tcp",
+    $host,
     storage_path(),
     config("cache.default"),
     config("session.driver"),
     config("mail.default"),
     config("queue.default"),
     config("filesystems.default"),
+    ...($connection->getDriverName() === "mysql" ? [$identity->isolation_level, $identity->session_timezone] : []),
 ]);
-')"
-EXPECTED_APPLICATION_IDENTITY="testing|pgsql|${DATABASE}|${DATABASE_USER}|socket|${SOCKET_ROOT}|${STORAGE_ROOT}|array|array|array|sync|local"
+')"; then
+    fail "Laravel test-configuration probe failed: ${APPLICATION_IDENTITY}"
+fi
+if [[ "${ENGINE}" == pgsql ]]; then
+    EXPECTED_APPLICATION_IDENTITY="testing|pgsql|${DATABASE}|${DATABASE_USER}|socket|${SOCKET_ROOT}|${STORAGE_ROOT}|array|array|array|sync|local"
+else
+    EXPECTED_APPLICATION_IDENTITY="testing|mysql|${DATABASE}|${DATABASE_USER}@localhost|socket|${MYSQL_SOCKET}|${STORAGE_ROOT}|array|array|array|sync|local|READ-COMMITTED|+00:00"
+fi
 
 [[ "${APPLICATION_IDENTITY}" == "${EXPECTED_APPLICATION_IDENTITY}" ]] \
     || fail "Laravel effective test configuration did not match the task-owned resources"
 
-echo "Isolation verified: PostgreSQL $(psql --version | awk '{print $3}'), private task-owned cluster, database ${DATABASE}."
-echo "Running ${#TESTS[@]} selected test files with PHP $(php -r 'echo PHP_VERSION;') and memory_limit=512M."
+if [[ "${ENGINE}" == pgsql ]]; then
+    echo "Isolation verified: PostgreSQL $(psql --version | awk '{print $3}'), private task-owned cluster, database ${DATABASE}."
+else
+    echo "Isolation verified: MySQL ${mysql_version}, private task-owned socket-only server, database ${DATABASE}, READ-COMMITTED server default and UTC application sessions."
+fi
+echo "Running ${#TESTS[@]} selected test files with PHP $("${PHP_BIN}" -r 'echo PHP_VERSION;') and memory_limit=512M."
 
-php -d memory_limit=512M -d max_execution_time=0 vendor/bin/pest --compact "${TESTS[@]}"
+"${PHP_BIN}" -d memory_limit=512M -d max_execution_time=0 vendor/bin/pest --compact --stop-on-defect "${TESTS[@]}"

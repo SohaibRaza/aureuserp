@@ -55,3 +55,57 @@ Focused verification used **PostgreSQL 18.1 and PHP 8.4.21** in private task-own
 After review, one combined **14-file selection passed 168 tests and 928 assertions in 86.17 seconds**, with no failed or skipped tests. It included the three focused files plus `ReconciliationIntegrityTest.php`, `MoveLifecycleTest.php`, `PaymentAtomicityTest.php`, `PaymentConcurrencyTest.php`, `PaymentCorrectionTest.php`, `LifecycleTest.php`, `ReconciliationControlsTest.php`, `MatchAccountingIntegrationTest.php`, `BankOpeningBalanceServiceTest.php`, `AdjustmentServiceTest.php` and `CompanyCurrencyGuardTest.php`. Payment contention tests were enabled. The private database was `aureuserp_20261021122913_16025_testing`; the retained local log is `/private/tmp/aureus-accounts-combined-20261021.log`.
 
 Scoped PHP 8.4 Pint and staged/unstaged Git whitespace checks passed. The original index and base commit were preserved. This selection establishes the listed development regressions, including real separate-connection period-lock checks; it is not a full ERP or full reconciliation-suite release baseline. Browser, migration-rehearsal and independent-accountant evidence requirements listed above remain separate.
+
+## 2026-10-21 PostgreSQL and MySQL compatibility
+
+This records development work on `production` at base commit `38cf452678f1de37c7f64b67a6d5e05f93299946`, with uncommitted changes. Tests use PHP 8.4.21, PostgreSQL 18.1 and Oracle MySQL 8.0.46 in private socket-only servers. MariaDB was not used. Application data and the two draft proposals were preserved; no commits, pushes or application migrations were performed.
+
+### Implemented controls
+
+- PostgreSQL keeps its null-aware stock constraint and transaction advisory locks. MySQL uses a functional unique index distinguishing NULL from real zero IDs. Company and stock-owner deletion is restricted while stock balances reference them. A cascading SET NULL collision reproducibly crashed MySQL 8.0.46 during rollback; the replacement foreign keys and index are installed in one atomic ALTER. Duplicate balances stop migration without being merged.
+- MySQL payment instructions serialize through transactional InnoDB request-hash rows. Instruction keys and bank transaction IDs use case-sensitive comparison. Payment reconciliation flags have explicit boolean casts on both engines.
+- MySQL period completion uses an exclusive Company row lock; accounting changes use its shared counterpart. Both use NOWAIT and READ COMMITTED. MySQL application sessions explicitly use UTC, preventing approval timestamps from shifting when read back without an offset. Tests compare requested and stored instants and reject expired approvals.
+- Database triggers protect Inventory results, Sales quantity commitments, Accounts history and Logistics history against direct updates and deletes. MySQL history rollbacks refuse before DDL, including empty schemas. Existing PostgreSQL Logistics installations receive missing protections through a registered forward migration. Failed or partial MySQL installations require inspected forward recovery; edited historical files do not repair their migration ledgers.
+- MySQL migration fixes preserve foreign-key indexes when removing old release uniqueness, shorten an oversized foreign-key name, replace PostgreSQL-only partial indexes and backfill syntax, and retain accepted-import approvers and historical actors.
+- The private runner resolves PHP from PATH or PHP_BIN, checks engine/resource identity, isolation and MySQL UTC sessions, and stops on the first test failure or setup error. Its MySQL server disables binary logging so a restricted test role can create mandatory triggers without SUPER. This does not establish replication or binary-log deployment readiness.
+
+### Verification history
+
+Clean focused PostgreSQL selections passed 44 tests / 335 assertions for payment, period and history checks; 17 tests / 89 assertions for bank imports; and 25 tests / 184 assertions for approvals, suspension, trips and evidence. Clean focused MySQL selections passed 22 tests / 165 assertions for history and imports, then 25 tests / 186 assertions after the UTC correction for approvals, suspension, trips and evidence.
+
+Earlier attempts are not counted as passes. They exposed runner startup/grant/probe problems, a trigger-creation privilege error, the oversized foreign-key name, the MySQL cascading-delete crash, a replacement foreign-key naming collision, integer payment flags, a worker initialization timeout, and a missing supporting foreign-key index. The runner originally stopped only on assertion failures, allowing setup errors to repeat installation; it now stops on all test defects. Three PostgreSQL combined attempts stopped after 115, 125 and 225 passing tests because of test setup defects: changing the bank-account scope of a duplicate test, unordered bank-journal selection after committed race fixtures, and rewriting an immutable approval to simulate expiry. The fixtures now preserve bank scope, select a stable journal and advance time instead of editing history. No assertion or database protection was removed.
+
+The reproduced crash log is `/private/tmp/aureus-mysql-stock-crash-20261021.log`. The focused UTC result is `/private/tmp/aureus-mysql-utc-workflow-focused-20261021.log`. The worker timeout was a failed verification attempt, not proof of a business-lock defect; final contention checks must pass without overlapping engine runs.
+
+The final 16-file PostgreSQL selection passed **246 tests and 1,297 assertions in 248.80 seconds**, with no failures or skips. The private database was `aureuserp_20261021145015_71528_testing`; the log is `/private/tmp/aureus-compatibility-pg-combined-final-20261021.log`.
+
+The final 16-file MySQL selection passed **246 tests and 1,313 assertions in 156.92 seconds**, with no failures or skips. The private database was `aureuserp_20261021145443_81019_testing`; the log is `/private/tmp/aureus-compatibility-mysql-combined-final-20261021.log`. Engine runs were sequential. Both runners exited successfully and removed their private databases and server directories. Scoped Pint, shell syntax, plan-pack validation and Git whitespace checks passed. The index and base commit were preserved.
+
+### Repeating the combined selection
+
+Run each engine separately, with PHP 8.4 and the appropriate server tools on PATH. The installation characterization must run before another test installs Logistics.
+
+```bash
+tests=(
+  plugins/shafique/logistics/tests/Feature/FoundationTest.php
+  plugins/webkul/inventories/tests/Feature/Workflows/StockIdentityTest.php
+  plugins/webkul/accounts/tests/Feature/Workflows/PaymentAtomicityTest.php
+  plugins/webkul/accounts/tests/Feature/Workflows/PaymentConcurrencyTest.php
+  tests/Feature/Recon/AccountingPeriodBoundaryTest.php
+  plugins/shafique/logistics/tests/Feature/EvidenceHistoryRollbackTest.php
+  tests/Feature/Recon/ReconciliationSchemaTest.php
+  tests/Feature/Recon/StatementImportTest.php
+  tests/Feature/Recon/BankOpeningBalanceServiceTest.php
+  plugins/webkul/inventories/tests/Feature/Workflows/OperationResultReplayTest.php
+  plugins/webkul/sales/tests/Feature/Workflows/QuantityCommitmentTest.php
+  plugins/shafique/logistics/tests/Feature/CommandIdentityTest.php
+  plugins/shafique/logistics/tests/Feature/ScopedApprovalTest.php
+  plugins/shafique/logistics/tests/Feature/SuspensionCutoffTest.php
+  plugins/shafique/logistics/tests/Feature/OutboundTripWorkflowTest.php
+  plugins/shafique/logistics/tests/Feature/EvidenceStoreTest.php
+)
+rtk proxy bash scripts/run_logistics_phase2a_tests.sh --engine=pgsql "${tests[@]}"
+rtk proxy bash scripts/run_logistics_phase2a_tests.sh --engine=mysql "${tests[@]}"
+```
+
+This is a selected development integrity baseline, not full ERP, browser, recovery, load or release acceptance. PostgreSQL 16 CI and Linux MySQL CI remain separate evidence gates. A future MySQL target must verify trigger-creation privileges with its binary-log configuration and inspect existing timestamps before adopting UTC; no historical timestamp correction is automatic.

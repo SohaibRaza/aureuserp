@@ -22,6 +22,12 @@ The project owner explicitly changed the database support decision: PostgreSQL r
 
 The current implementation includes PostgreSQL advisory transaction locks in Accounts, a PostgreSQL NULLS NOT DISTINCT stock-identity constraint, PL/pgSQL immutable-history triggers, and PostgreSQL table locks in rollback guards. These need reviewed MySQL equivalents and tests. This documentation change does not implement them or establish that the MySQL CI lanes pass.
 
+## Compatibility implementation — 2026-10-21
+
+The implementation now provides MySQL functional stock-identity indexes, transactional InnoDB payment-request locks, Company-row period locks under READ COMMITTED, explicit UTC MySQL sessions preserving approval timestamps, and database triggers protecting immutable history. MySQL refuses deletion of a Company or stock owner referenced by a stock balance, preserving the identity and avoiding a reproduced MySQL 8.0.46 crash during cascading SET NULL collision rollback. PostgreSQL retains its existing foreign-key behavior, null-aware constraint and transaction advisory locks. MySQL bank source IDs and payment keys use case-sensitive comparison. MySQL history rollback refuses before DDL, including empty schemas; use reviewed forward recovery. A forward migration installs missing history triggers on existing PostgreSQL Logistics tables.
+
+These statements describe code, not release certification. Current test results and exact engine versions belong in the [verification register](../testing/bank-reconciliation-release-evidence.md). The supported CI minimum versions remain separate from local evidence. Partially failed MySQL installations need an inspected schema and migration-ledger recovery; changing old migration files does not repair them automatically.
+
 ## Consequences
 
 - The normal test and CI policy now includes both engines; the historical PostgreSQL-only instruction is no longer current.

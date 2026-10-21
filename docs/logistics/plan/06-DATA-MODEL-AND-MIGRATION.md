@@ -43,7 +43,7 @@ These families define required persisted meaning. Physical tables may combine cl
 4. Bounded backfill: use stable primary-key windows, resumable checkpoints and row counts/hashes; do not hold operational locks for a full historical table.
 5. Dual-read only when necessary and time-bounded; name the retirement criterion. Avoid dual-write unless both writes share one transaction and invariant.
 6. Forward correction over history rewrite: opening/adoption records reference existing native effects and physical position.
-7. PostgreSQL is primary and MySQL is also supported under [ADR 0008](../../adr/0008-postgresql-primary-and-mysql-support.md). Prove identity, constraints and transaction behavior on both recorded engine versions. PostgreSQL-specific SQL below describes the current implementation, not a MySQL implementation; reviewed equivalents and MySQL tests are still required.
+7. PostgreSQL is primary and MySQL is also supported under [ADR 0008](../../adr/0008-postgresql-primary-and-mysql-support.md). Prove identity, constraints and transaction behavior on both recorded engine versions. The preflight SQL below is PostgreSQL-specific; MySQL must use an equivalent read-only duplicate report before applying constraints to existing data.
 8. Rollback preserves facts: code rollback may disable new commands, but migrations containing actual business history are not destructively rolled back.
 
 ## Required physical schema specification
@@ -77,6 +77,8 @@ Schema review must link the applicable D, IC, DM, G, Q and AE identifiers. A mig
 ### M2A. Inventory owner integrity
 
 - Add Inventory constraints/indexes only after Q3 identity decision and clean preflight. The local six-column balance-identity implementation uses PostgreSQL `UNIQUE NULLS NOT DISTINCT` and therefore requires PostgreSQL 15 or newer; verify the deployment version and duplicates before applying it. See the [integrity evidence and migration conditions](../P0-EXECUTION-REPORT-2026-09-24.md#continued-inventory-and-accounts-integrity-work--2026-09-24).
+- MySQL uses a functional unique index containing a null flag and a coalesced value for each nullable identity component. This treats matching empty values as equal without confusing an empty value with a real zero ID. Its hidden virtual columns must not appear in normal model attributes. Duplicate identities stop migration; they are never merged automatically. On MySQL, Company and stock-owner foreign keys use RESTRICT deletion: archive referenced records instead of deleting them. A cascading SET NULL collision reproducibly crashed MySQL 8.0.46 during rollback; rejecting parent deletion preserves the stock identity and avoids that engine path. PostgreSQL retains its existing constrained SET NULL behavior. MySQL stock-identity rollback refuses to restore the unsafe cascading foreign keys; use forward recovery.
+- Immutable history uses database triggers on both engines. MySQL history migrations refuse destructive rollback before any DDL; use reviewed forward recovery. Existing PostgreSQL Logistics installations receive missing history protections through the registered forward migration rather than relying on edited historical migrations. Partially failed MySQL installations require schema and migration-ledger inspection before recovery; do not insert migration records to conceal missing constraints.
 - Deploy compatible owner services before activating constraints that old writers cannot satisfy.
 
 #### Read-only target duplicate preflight
