@@ -9,6 +9,7 @@ use Webkul\Account\Enums\MoveState;
 use Webkul\Account\Enums\MoveType;
 use Webkul\Account\Events\MoveCancelled;
 use Webkul\Account\Events\MoveDrafted;
+use Webkul\Account\Models\Account;
 use Webkul\Account\Models\FullReconcile;
 use Webkul\Account\Models\Move;
 use Webkul\Account\Models\MoveLine;
@@ -284,6 +285,34 @@ it('keeps empty reconciliation inert and rejects forged posted state', function 
         $line->move->state = MoveState::POSTED;
     }
     expect(fn () => app(Reconciler::class)->reconcile($lines))->toThrow(Exception::class, 'only reconcile posted');
+});
+
+it('compares reconciliation accounts by persisted identity rather than loaded model state', function (): void {
+    $invoice = ($this->document)(MoveType::OUT_INVOICE, 100);
+    $credit = ($this->document)(MoveType::OUT_REFUND, 100);
+    $lines = $invoice->paymentTermLines->merge($credit->paymentTermLines);
+    $accountId = $lines->first()->account_id;
+
+    $firstAccount = Account::findOrFail($accountId);
+    $staleAccount = Account::findOrFail($accountId)->setAttribute('name', 'Stale account snapshot');
+    $firstCompany = $lines->first()->company;
+    $staleCompany = (clone $firstCompany)->setAttribute('name', 'Stale company snapshot');
+
+    $lines->first()->setRelation('account', $firstAccount);
+    $lines->last()->setRelation('account', $staleAccount);
+    $lines->first()->setRelation('company', $firstCompany);
+    $lines->last()->setRelation('company', $staleCompany);
+
+    expect($lines->pluck('account_id')->unique())->toHaveCount(1);
+
+    app(Reconciler::class)->assertReconcilable($lines);
+
+    $otherAccount = AccountHelper::account('income');
+    $lines->last()->account_id = $otherAccount->id;
+    $lines->last()->setRelation('account', $otherAccount);
+
+    expect(fn () => app(Reconciler::class)->assertReconcilable($lines))
+        ->toThrow(ValidationException::class, 'Entries are not from the same account');
 });
 
 it('unmatches foreign documents and reverses their recorded exchange difference coherently', function (): void {

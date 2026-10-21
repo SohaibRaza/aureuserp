@@ -883,30 +883,38 @@ class Reconciler
             throw ValidationException::withMessages(['lines' => __('You can only reconcile posted entries.')]);
         }
 
-        $accounts = $lines->pluck('account')->unique();
+        $accountIds = $lines->pluck('account_id')->unique();
 
-        if ($accounts->count() > 1) {
+        if ($accountIds->count() > 1) {
+            $accounts = $lines->map->account->filter()->unique('id');
+
             throw ValidationException::withMessages(['lines' => __(
                 'Entries are not from the same account: :accounts',
                 ['accounts' => $accounts->pluck('display_name')->implode(', ')]
             )]);
         }
 
+        $account = $lines->first()->account;
+
         if ($lines->pluck('partner_id')->unique()->count() > 1) {
             throw ValidationException::withMessages(['lines' => __('All lines must have the same partner.')]);
         }
 
-        if ($lines->pluck('company')->unique()->count() > 1) {
+        $companyIds = $lines->pluck('company_id')->unique();
+
+        if ($companyIds->count() > 1) {
+            $companies = $lines->map->company->filter()->unique('id');
+
             throw ValidationException::withMessages(['lines' => __(
                 "Entries don't belong to the same company: :companies",
-                ['companies' => $lines->pluck('company')->pluck('display_name')->implode(', ')]
+                ['companies' => $companies->pluck('display_name')->implode(', ')]
             )]);
         }
 
-        if (! $this->allowsReconciliation($accounts->first())) {
+        if (! $this->allowsReconciliation($account)) {
             throw ValidationException::withMessages(['lines' => __(
                 'Account :account does not allow reconciliation. First change the configuration of this account to allow it.',
-                ['account' => $accounts->first()->display_name]
+                ['account' => $account->display_name]
             )]);
         }
     }
