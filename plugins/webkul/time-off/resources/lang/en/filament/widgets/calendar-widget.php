@@ -19,6 +19,11 @@ return [
 
         'delete' => [
             'title' => 'Delete',
+
+            'notification' => [
+                'title' => 'Time Off Deleted',
+                'body'  => 'Your time off request has been deleted successfully.',
+            ],
         ],
     ],
 
@@ -28,6 +33,7 @@ return [
             'month' => 'Month',
             'week'  => 'Week',
             'list'  => 'List',
+            'year'  => 'Year',
         ],
     ],
 

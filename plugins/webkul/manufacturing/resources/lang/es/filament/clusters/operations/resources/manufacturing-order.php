@@ -116,6 +116,24 @@ return [
             'responsible'      => 'Responsable',
             'deadline'         => 'Fecha límite',
         ],
+
+        'actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Orden de fabricación eliminada',
+                    'body'  => 'La orden de fabricación se ha eliminado correctamente.',
+                ],
+            ],
+        ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Órdenes de fabricación eliminadas',
+                    'body'  => 'Las órdenes de fabricación seleccionadas se han eliminado correctamente.',
+                ],
+            ],
+        ],
     ],
 
     'infolist' => [

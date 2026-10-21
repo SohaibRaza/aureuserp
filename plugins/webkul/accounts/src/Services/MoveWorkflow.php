@@ -239,6 +239,8 @@ class MoveWorkflow
             $copy->move_id = $reversal->id;
 
             $copy->save();
+
+            $copy->taxes()->sync($line->taxes->pluck('id')->all());
         }
 
         return app(MoveCalculator::class)->recompute($reversal);

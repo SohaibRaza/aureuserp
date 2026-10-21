@@ -55,7 +55,13 @@ class CashRoundingsTable
             ])
             ->recordActions([
                 ViewAction::make(),
-                EditAction::make(),
+                EditAction::make()
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('accounts::filament/resources/cash-rounding.table.actions.edit.notification.title'))
+                            ->body(__('accounts::filament/resources/cash-rounding.table.actions.edit.notification.body'))
+                    ),
                 DeleteAction::make()
                     ->successNotification(
                         Notification::make()

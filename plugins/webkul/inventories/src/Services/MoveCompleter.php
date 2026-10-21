@@ -73,7 +73,7 @@ class MoveCompleter
 
             $operation = $completable->pluck('operation')->unique()->filter()->first();
 
-            $completable->each->update(['state' => MoveState::DONE, 'date' => now()]);
+            $completable->each->update(['state' => MoveState::DONE, 'scheduled_at' => now()]);
 
             $this->reserveDownstream($completable);
 

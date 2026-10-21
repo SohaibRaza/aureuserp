@@ -6,6 +6,8 @@ use BezhanSalleh\FilamentShield\Traits\HasWidgetShield;
 use Filament\Widgets\Concerns\InteractsWithPageFilters;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
+use Flowframe\Trend\Trend;
+use Flowframe\Trend\TrendValue;
 use Illuminate\Support\Carbon;
 use Webkul\Employee\Models\EmployeeJobPosition;
 use Webkul\Recruitment\Models\Applicant;
@@ -39,6 +41,29 @@ class JobPositionStatsWidget extends BaseWidget
         if (! empty($this->pageFilters['selectedCompanies'])) {
             $query->whereIn('company_id', $this->pageFilters['selectedCompanies']);
             $applicantQuery->whereIn('company_id', $this->pageFilters['selectedCompanies']);
+        }
+
+        if (! empty($this->pageFilters['selectedJobs'])) {
+            $query->whereIn('id', $this->pageFilters['selectedJobs']);
+            $applicantQuery->whereIn('job_id', $this->pageFilters['selectedJobs']);
+        }
+
+        if (! empty($this->pageFilters['selectedStages'])) {
+            $applicantQuery->whereIn('stage_id', $this->pageFilters['selectedStages']);
+        }
+
+        $status = $this->pageFilters['status'] ?? 'all';
+
+        if ($status !== 'all') {
+            match ($status) {
+                'hired'    => $applicantQuery->whereNotNull('date_closed'),
+                'refused'  => $applicantQuery->whereNotNull('refuse_reason_id'),
+                'ongoing'  => $applicantQuery->whereNull('refuse_reason_id')
+                    ->whereNull('date_closed')
+                    ->where('is_active', true),
+                'archived' => $applicantQuery->where('is_active', false),
+                default    => $applicantQuery,
+            };
         }
 
         $currentPeriodStart = ! is_null($this->pageFilters['startDate'] ?? null) ?
@@ -102,16 +127,15 @@ class JobPositionStatsWidget extends BaseWidget
 
     protected function generateChartData($query, $startDate, $endDate): array
     {
-        $data = [];
-        $current = clone $startDate;
+        $trend = Trend::query($query)
+            ->between(
+                start: $startDate,
+                end: $endDate,
+            )
+            ->perDay()
+            ->count();
 
-        while ($current <= $endDate) {
-            $count = $query->whereDate('created_at', $current)->count();
-            $data[] = $count;
-            $current->addDay();
-        }
-
-        return $data;
+        return $trend->map(fn (TrendValue $value) => (int) $value->aggregate)->toArray();
     }
 
     protected function calculatePercentageChange($current, $previous): array

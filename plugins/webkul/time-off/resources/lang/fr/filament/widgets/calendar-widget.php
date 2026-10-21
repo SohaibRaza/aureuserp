@@ -19,6 +19,11 @@ return [
 
         'delete' => [
             'title' => 'Supprimer',
+
+            'notification' => [
+                'title' => 'Congé supprimé',
+                'body'  => 'Votre demande de congé a été supprimée avec succès.',
+            ],
         ],
     ],
 
@@ -28,6 +33,7 @@ return [
             'month' => 'Mois',
             'week'  => 'Semaine',
             'list'  => 'Liste',
+            'year'  => 'Année',
         ],
     ],
 

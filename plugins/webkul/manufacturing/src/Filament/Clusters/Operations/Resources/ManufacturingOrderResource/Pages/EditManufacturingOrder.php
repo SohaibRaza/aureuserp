@@ -4,6 +4,7 @@ namespace Webkul\Manufacturing\Filament\Clusters\Operations\Resources\Manufactur
 
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Webkul\Chatter\Filament\Actions\ChatterAction;
 use Webkul\Manufacturing\Filament\Clusters\Operations\Actions\CancelAction;
@@ -38,6 +39,14 @@ class EditManufacturingOrder extends EditRecord
         $data['destination_location_id'] = $data['final_location_id'] ?? $data['destination_location_id'] ?? null;
 
         return $data;
+    }
+
+    protected function getSavedNotification(): Notification
+    {
+        return Notification::make()
+            ->success()
+            ->title(__('manufacturing::filament/clusters/operations/resources/manufacturing-order/pages/edit-manufacturing-order.notification.title'))
+            ->body(__('manufacturing::filament/clusters/operations/resources/manufacturing-order/pages/edit-manufacturing-order.notification.body'));
     }
 
     protected function configureAction(Action $action): void

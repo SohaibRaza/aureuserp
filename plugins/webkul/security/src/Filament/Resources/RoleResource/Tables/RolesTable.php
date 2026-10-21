@@ -47,7 +47,13 @@ class RolesTable
 
                             $action->cancel();
                         }
-                    }),
+                    })
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('security::filament/resources/role.table.actions.delete.notification.title'))
+                            ->body(__('security::filament/resources/role.table.actions.delete.notification.body')),
+                    ),
             ])
             ->toolbarActions([
                 DeleteBulkAction::make()
@@ -65,7 +71,13 @@ class RolesTable
                         }
 
                         $deletableRecords->each(fn (Model $record): ?bool => $record->delete());
-                    }),
+                    })
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('security::filament/resources/role.table.bulk-actions.delete.notification.title'))
+                            ->body(__('security::filament/resources/role.table.bulk-actions.delete.notification.body')),
+                    ),
             ])
             ->defaultSort('created_at', 'asc');
     }

@@ -15,6 +15,7 @@ class Follower extends Model
         'followable_id',
         'followable_type',
         'partner_id',
+        'followed_at',
     ];
 
     protected $casts = [

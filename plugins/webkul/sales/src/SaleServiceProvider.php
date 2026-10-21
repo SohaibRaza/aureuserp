@@ -12,6 +12,7 @@ use Webkul\Account\Events\MoveConfirmed;
 use Webkul\Account\Events\MoveDrafted;
 use Webkul\Account\Events\MovePaid;
 use Webkul\Account\Events\MoveReversed;
+use Webkul\Account\Models\PaymentTerm;
 use Webkul\Chatter\Services\ChatterCleanupService;
 use Webkul\Inventory\Events\OperationDone;
 use Webkul\Partner\Filament\Resources\PartnerResource\Support\PartnerSchemaRegistry;
@@ -32,6 +33,7 @@ use Webkul\Sale\Models\OrderLine;
 use Webkul\Sale\Models\OrderOption;
 use Webkul\Sale\Models\OrderTemplateProduct;
 use Webkul\Sale\Models\Team;
+use Webkul\Sale\Observers\PaymentTermObserver;
 use Webkul\Support\Services\SequenceService;
 
 class SaleServiceProvider extends PackageServiceProvider
@@ -119,15 +121,26 @@ class SaleServiceProvider extends PackageServiceProvider
 
         $this->contributeProductUsage();
 
+        $this->registerObservers();
+    }
+
+    protected function registerObservers(): void
+    {
+        if (! Package::isPluginInstalled(static::$name)) {
+            return;
+        }
+
+        PaymentTerm::observe(PaymentTermObserver::class);
+
         $this->contributePartnerPriceList();
     }
 
-    /**
-     * Offer the customer's default price list on the partner form, so quotations
-     * raised for them start on the right list.
-     */
     protected function contributePartnerPriceList(): void
     {
+        if (! Package::isPluginInstalled(static::$name)) {
+            return;
+        }
+
         PartnerSchemaRegistry::form('sales.fields', fn (): array => [
             Select::make('price_list_id')
                 ->label(__('sales::filament/clusters/orders/resources/quotation.form.section.general.fields.price-list'))

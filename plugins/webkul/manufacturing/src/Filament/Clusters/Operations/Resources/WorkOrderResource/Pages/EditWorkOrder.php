@@ -2,6 +2,7 @@
 
 namespace Webkul\Manufacturing\Filament\Clusters\Operations\Resources\WorkOrderResource\Pages;
 
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Webkul\Manufacturing\Filament\Clusters\Operations\Resources\WorkOrderResource;
 use Webkul\Support\Filament\Concerns\HasRepeaterColumnManager;
@@ -18,5 +19,13 @@ class EditWorkOrder extends EditRecord
     public function getTitle(): string
     {
         return $this->getRecord()->display_name;
+    }
+
+    protected function getSavedNotification(): Notification
+    {
+        return Notification::make()
+            ->success()
+            ->title(__('manufacturing::filament/clusters/operations/resources/work-order/pages/edit-work-order.notification.title'))
+            ->body(__('manufacturing::filament/clusters/operations/resources/work-order/pages/edit-work-order.notification.body'));
     }
 }

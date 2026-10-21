@@ -96,7 +96,7 @@ class MoveMerger
         return [
             'product_uom_qty'   => $keepFirstQuantity ? $moves->first()->product_uom_qty : $moves->sum('product_uom_qty'),
             'product_qty'       => $keepFirstQuantity ? $moves->first()->product_qty : $moves->sum('product_qty'),
-            'date'              => $allDirect ? $moves->min('date') : $moves->max('date'),
+            'scheduled_at'      => $allDirect ? $moves->min('scheduled_at') : $moves->max('scheduled_at'),
             'state'             => $this->stateResolver()->relevantState($moves),
             'origin'            => $moves->pluck('origin')->filter()->unique()->implode('/'),
             'move_destinations' => $moves->flatMap->moveDestinations,

@@ -552,8 +552,8 @@ class EmployeesTable
                             } catch (QueryException $e) {
                                 Notification::make()
                                     ->danger()
-                                    ->title(__('accounts::filament/resources/tax-group.table.bulk-actions.delete.notification.error.title'))
-                                    ->body(__('accounts::filament/resources/tax-group.table.bulk-actions.delete.notification.error.body'))
+                                    ->title(__('employees::filament/resources/employee.table.bulk-actions.delete.notification.error.title'))
+                                    ->body(__('employees::filament/resources/employee.table.bulk-actions.delete.notification.error.body'))
                                     ->send();
                             }
                         })

@@ -294,7 +294,13 @@ class ApplicantsTable
                     ViewAction::make(),
                     EditAction::make(),
                     RestoreAction::make()
-                        ->visible(fn (Applicant $record) => $record->trashed()),
+                        ->visible(fn (Applicant $record) => $record->trashed())
+                        ->successNotification(
+                            Notification::make()
+                                ->success()
+                                ->title(__('recruitments::filament/clusters/applications/resources/applicant.table.actions.restore.notification.title'))
+                                ->body(__('recruitments::filament/clusters/applications/resources/applicant.table.actions.restore.notification.body'))
+                        ),
                     DeleteAction::make()
                         ->successNotification(
                             Notification::make()

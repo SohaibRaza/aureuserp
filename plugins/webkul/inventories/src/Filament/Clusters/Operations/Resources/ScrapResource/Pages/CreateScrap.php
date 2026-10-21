@@ -2,6 +2,7 @@
 
 namespace Webkul\Inventory\Filament\Clusters\Operations\Resources\ScrapResource\Pages;
 
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\Auth;
@@ -37,6 +38,14 @@ class CreateScrap extends CreateRecord
     protected function getRedirectUrl(): string
     {
         return $this->getResource()::getUrl('edit', ['record' => $this->getRecord()]);
+    }
+
+    protected function getCreatedNotification(): Notification
+    {
+        return Notification::make()
+            ->success()
+            ->title(__('inventories::filament/clusters/operations/resources/scrap/pages/create-scrap.notification.title'))
+            ->body(__('inventories::filament/clusters/operations/resources/scrap/pages/create-scrap.notification.body'));
     }
 
     protected function mutateFormDataBeforeCreate(array $data): array

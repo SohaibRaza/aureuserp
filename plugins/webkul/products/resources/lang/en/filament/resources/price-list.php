@@ -98,5 +98,14 @@ return [
             'status'   => 'Active',
             'currency' => 'Currency',
         ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Price lists deleted',
+                    'body'  => 'The selected price lists have been deleted successfully.',
+                ],
+            ],
+        ],
     ],
 ];

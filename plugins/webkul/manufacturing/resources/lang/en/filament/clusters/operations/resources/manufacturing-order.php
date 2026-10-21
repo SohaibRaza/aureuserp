@@ -116,6 +116,24 @@ return [
             'responsible'      => 'Responsible',
             'deadline'         => 'Deadline',
         ],
+
+        'actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Manufacturing order deleted',
+                    'body'  => 'The manufacturing order has been deleted successfully.',
+                ],
+            ],
+        ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Manufacturing orders deleted',
+                    'body'  => 'The selected manufacturing orders have been deleted successfully.',
+                ],
+            ],
+        ],
     ],
 
     'infolist' => [

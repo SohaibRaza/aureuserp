@@ -32,6 +32,13 @@ return [
         ],
 
         'actions' => [
+            'edit' => [
+                'notification' => [
+                    'title' => 'Arredondamento de caixa atualizado',
+                    'body'  => 'O arredondamento de caixa foi atualizado com sucesso.',
+                ],
+            ],
+
             'delete' => [
                 'notification' => [
                     'title' => 'Arredondamento de caixa excluído',

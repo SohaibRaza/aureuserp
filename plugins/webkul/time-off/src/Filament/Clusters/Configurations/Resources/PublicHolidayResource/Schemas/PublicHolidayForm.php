@@ -57,7 +57,7 @@ class PublicHolidayForm
                                     'after_or_equal:date_from',
                                 ]),
                         ])->columns(2),
-                    Select::make('calendar')
+                    Select::make('calendar_id')
                         ->searchable()
                         ->label(__('time-off::filament/clusters/configurations/resources/public-holiday.form.fields.calendar'))
                         ->preload()

@@ -483,7 +483,7 @@
                 <div class="terms">
                     <div class="options-title">{{ __('sales::app.documents.terms-and-conditions') }}</div>
 
-                    <div class="terms-body">{!! $terms !!}</div>
+                    <div class="terms-body">{!! str($terms)->sanitizeHtml() !!}</div>
                 </div>
             @endif
 

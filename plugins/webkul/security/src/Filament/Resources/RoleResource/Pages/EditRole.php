@@ -37,7 +37,13 @@ class EditRole extends EditRecord
 
                         $action->cancel();
                     }
-                }),
+                })
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('security::filament/resources/role/pages/edit-role.header-actions.delete.notification.title'))
+                        ->body(__('security::filament/resources/role/pages/edit-role.header-actions.delete.notification.body')),
+                ),
         ];
     }
 

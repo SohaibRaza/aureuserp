@@ -284,6 +284,11 @@ return [
                 'notification' => [
                     'title' => 'Employés supprimés',
                     'body'  => 'Les employés ont été supprimés avec succès.',
+
+                    'error' => [
+                        'title' => 'Les employés n\'ont pas pu être supprimés',
+                        'body'  => 'Les employés ne peuvent pas être supprimés car ils sont actuellement utilisés.',
+                    ],
                 ],
             ],
 

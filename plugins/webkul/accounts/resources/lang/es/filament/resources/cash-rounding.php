@@ -32,6 +32,13 @@ return [
         ],
 
         'actions' => [
+            'edit' => [
+                'notification' => [
+                    'title' => 'Redondeo de efectivo actualizado',
+                    'body'  => 'El redondeo de efectivo se ha actualizado correctamente.',
+                ],
+            ],
+
             'delete' => [
                 'notification' => [
                     'title' => 'Redondeo de efectivo eliminado',

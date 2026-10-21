@@ -183,7 +183,7 @@ class ReceiptPlanner
 
         return [
             'state'                   => InventoryEnums\OperationState::DRAFT,
-            'date'                    => $order->ordered_at,
+            'scheduled_at'            => $order->ordered_at,
             'origin'                  => $order->name,
             'partner_id'              => $order->partner_id,
             'operation_type_id'       => $order->operation_type_id,

@@ -22,7 +22,7 @@ class SkillTypeInfolist
                         TextEntry::make('color')
                             ->placeholder('—')
                             ->html()
-                            ->formatStateUsing(fn (Model $skillType) => '<span class="flex h-5 w-5 rounded-full" style="background: var(--'.$skillType->color.'-500)"></span>')
+                            ->formatStateUsing(fn (Model $skillType) => '<span class="flex h-5 w-5 rounded-full" style="background: var(--'.e($skillType->color).'-500)"></span>')
                             ->label(__('employees::filament/clusters/configurations/resources/skill-type.infolist.sections.entries.color')),
                         IconEntry::make('is_active')
                             ->boolean()

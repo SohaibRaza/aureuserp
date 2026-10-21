@@ -70,13 +70,14 @@ class CalendarWidget extends FullCalendarWidget
             'headerToolbar'    => [
                 'left'   => 'prev,next today',
                 'center' => 'title',
-                'right'  => 'dayGridMonth,timeGridWeek,listWeek',
+                'right'  => 'multiMonthYear,dayGridMonth,timeGridWeek,listWeek',
             ],
             'buttonText' => [
-                'today'        => __('time-off::filament/widgets/calendar-widget.config.button-text.today'),
-                'dayGridMonth' => __('time-off::filament/widgets/calendar-widget.config.button-text.month'),
-                'timeGridWeek' => __('time-off::filament/widgets/calendar-widget.config.button-text.week'),
-                'listWeek'     => __('time-off::filament/widgets/calendar-widget.config.button-text.list'),
+                'today'          => __('time-off::filament/widgets/calendar-widget.config.button-text.today'),
+                'multiMonthYear' => __('time-off::filament/widgets/calendar-widget.config.button-text.year'),
+                'dayGridMonth'   => __('time-off::filament/widgets/calendar-widget.config.button-text.month'),
+                'timeGridWeek'   => __('time-off::filament/widgets/calendar-widget.config.button-text.week'),
+                'listWeek'       => __('time-off::filament/widgets/calendar-widget.config.button-text.list'),
             ],
             'height'           => 'auto',
             'aspectRatio'      => 1.8,
@@ -197,7 +198,13 @@ class CalendarWidget extends FullCalendarWidget
                 ->label(__('time-off::filament/widgets/calendar-widget.modal-actions.delete.title'))
                 ->modalIcon('heroicon-o-trash')
                 ->icon('heroicon-o-trash')
-                ->color('danger'),
+                ->color('danger')
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('time-off::filament/widgets/calendar-widget.modal-actions.delete.notification.title'))
+                        ->body(__('time-off::filament/widgets/calendar-widget.modal-actions.delete.notification.body'))
+                ),
         ];
     }
 
@@ -356,7 +363,10 @@ class CalendarWidget extends FullCalendarWidget
             ->where('user_id', $user->id)
             ->orWhere('employee_id', $user?->employee?->id)
             ->where('request_date_from', '>=', $fetchInfo['start'])
-            ->where('request_date_to', '<=', $fetchInfo['end'])
+            ->where(function ($query) use ($fetchInfo) {
+                $query->where('request_date_to', '<=', $fetchInfo['end'])
+                    ->orWhereNull('request_date_to');
+            })
             ->with('holidayStatus', 'user')
             ->get()
             ->map(function (Leave $leave) {

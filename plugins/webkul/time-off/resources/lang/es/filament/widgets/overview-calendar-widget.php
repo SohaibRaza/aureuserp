@@ -16,6 +16,11 @@ return [
 
         'delete' => [
             'title' => 'Eliminar',
+
+            'notification' => [
+                'title' => 'Ausencia eliminada',
+                'body'  => 'La solicitud de ausencia se ha eliminado correctamente.',
+            ],
         ],
     ],
 

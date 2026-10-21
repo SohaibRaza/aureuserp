@@ -40,7 +40,12 @@ class OverviewCalendarWidget extends FullCalendarWidget
     public function config(): array
     {
         return [
-            'initialView' => 'multiMonthYear',
+            'initialView'   => 'multiMonthYear',
+            'headerToolbar' => [
+                'left'   => 'prev,next today',
+                'center' => 'title',
+                'right'  => 'multiMonthYear,dayGridMonth,dayGridWeek,dayGridDay',
+            ],
         ];
     }
 
@@ -75,7 +80,13 @@ class OverviewCalendarWidget extends FullCalendarWidget
                     }
                 ),
             DeleteAction::make()
-                ->label(__('time-off::filament/widgets/overview-calendar-widget.modal-actions.delete.title')),
+                ->label(__('time-off::filament/widgets/overview-calendar-widget.modal-actions.delete.title'))
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('time-off::filament/widgets/overview-calendar-widget.modal-actions.delete.notification.title'))
+                        ->body(__('time-off::filament/widgets/overview-calendar-widget.modal-actions.delete.notification.body'))
+                ),
         ];
     }
 
@@ -152,15 +163,26 @@ class OverviewCalendarWidget extends FullCalendarWidget
 
         return Leave::query()
             ->where('request_date_from', '>=', $fetchInfo['start'])
-            ->where('request_date_to', '<=', $fetchInfo['end'])
+            ->where(function ($query) use ($fetchInfo) {
+                $query->where('request_date_to', '<=', $fetchInfo['end'])
+                    ->orWhereNull('request_date_to');
+            })
             ->with('holidayStatus')
             ->get()
             ->map(function (Leave $leave) {
+                $title = $leave->holidayStatus?->name;
+
+                if ($leave->request_unit_half) {
+                    $title .= ' (0.5 day)';
+                } else {
+                    $title .= ' ('.round($leave->number_of_days, 1).'d)';
+                }
+
                 return [
                     'id'              => $leave->id,
-                    'title'           => $leave->holidayStatus?->name,
+                    'title'           => $title,
                     'start'           => $leave->request_date_from,
-                    'end'             => $leave->request_date_to,
+                    'end'             => $leave->request_date_to ? Carbon::parse($leave->request_date_to)->addDay()->toDateString() : null,
                     'allDay'          => true,
                     'backgroundColor' => $leave->holidayStatus?->color,
                     'borderColor'     => $leave->holidayStatus?->color,

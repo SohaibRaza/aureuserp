@@ -311,10 +311,13 @@ class InstallCommand extends Command
         if (! $migrationsToRun->isEmpty()) {
             $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> database migrations...");
 
-            if ($this->call('migrate', [
-                '--path' => $migrationsToRun->toArray(),
-            ]) !== self::SUCCESS) {
-                throw new RuntimeException("Unable to migrate plugin [{$this->package->shortName()}].");
+            $exitCode = $this->call('migrate', [
+                '--path'  => $migrationsToRun->toArray(),
+                '--force' => true,
+            ]);
+
+            if ($exitCode !== self::SUCCESS) {
+                throw new RuntimeException("Migrations for {$this->package->shortName()} failed with exit code {$exitCode}.");
             }
 
             $this->info("✅ Migrations <comment>{$this->package->shortName()}</comment> completed successfully.");
@@ -339,11 +342,13 @@ class InstallCommand extends Command
         if (! $settingsToRun->isEmpty()) {
             $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> settings database migrations...");
 
-            if ($this->call('migrate', [
+            $exitCode = $this->call('migrate', [
                 '--path'  => $settingsToRun->toArray(),
                 '--force' => true,
-            ]) !== self::SUCCESS) {
-                throw new RuntimeException("Unable to migrate settings for plugin [{$this->package->shortName()}].");
+            ]);
+
+            if ($exitCode !== self::SUCCESS) {
+                throw new RuntimeException("Settings migrations for {$this->package->shortName()} failed with exit code {$exitCode}.");
             }
 
             $this->callSilently('settings:clear-cache');
@@ -385,10 +390,13 @@ class InstallCommand extends Command
         $this->info("⚙️ Running <comment>{$this->package->shortName()}</comment> database seeders...");
 
         foreach ($this->package->seederClasses as $seeder) {
-            if ($this->call('db:seed', [
+            $exitCode = $this->call('db:seed', [
                 '--class' => $seeder,
-            ]) !== self::SUCCESS) {
-                throw new RuntimeException("Unable to seed plugin [{$this->package->shortName()}].");
+                '--force' => true,
+            ]);
+
+            if ($exitCode !== self::SUCCESS) {
+                throw new RuntimeException("Seeder {$seeder} failed with exit code {$exitCode}.");
             }
         }
 

@@ -32,6 +32,13 @@ return [
         ],
 
         'actions' => [
+            'edit' => [
+                'notification' => [
+                    'title' => 'تم تحديث تقريب النقد',
+                    'body'  => 'تم تحديث تقريب النقد بنجاح.',
+                ],
+            ],
+
             'delete' => [
                 'notification' => [
                     'title' => 'تم حذف تقريب النقد',

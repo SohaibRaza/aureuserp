@@ -16,6 +16,11 @@ return [
 
         'delete' => [
             'title' => 'Delete',
+
+            'notification' => [
+                'title' => 'Time Off Deleted',
+                'body'  => 'Time off request has been deleted successfully.',
+            ],
         ],
     ],
 

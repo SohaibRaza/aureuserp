@@ -284,6 +284,11 @@ return [
                 'notification' => [
                     'title' => 'Colaboradores excluídos',
                     'body'  => 'Os colaboradores foram excluídos com sucesso.',
+
+                    'error' => [
+                        'title' => 'Os colaboradores não puderam ser excluídos',
+                        'body'  => 'Os colaboradores não podem ser excluídos porque estão em uso no momento.',
+                    ],
                 ],
             ],
 

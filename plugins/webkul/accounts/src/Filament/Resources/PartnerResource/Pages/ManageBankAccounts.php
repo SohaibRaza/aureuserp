@@ -3,6 +3,7 @@
 namespace Webkul\Account\Filament\Resources\PartnerResource\Pages;
 
 use Filament\Actions\CreateAction;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ManageRelatedRecords;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
@@ -39,7 +40,13 @@ class ManageBankAccounts extends ManageRelatedRecords
                     ->icon('heroicon-o-plus-circle')
                     ->mutateDataUsing(function (array $data): array {
                         return $data;
-                    }),
+                    })
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('accounts::filament/resources/partner/pages/manage-bank-account.table.header-actions.create.notification.title'))
+                            ->body(__('accounts::filament/resources/partner/pages/manage-bank-account.table.header-actions.create.notification.body'))
+                    ),
             ]);
     }
 

@@ -98,5 +98,14 @@ return [
             'status'   => 'Activo',
             'currency' => 'Moneda',
         ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Listas de precios eliminadas',
+                    'body'  => 'Las listas de precios seleccionadas se han eliminado correctamente.',
+                ],
+            ],
+        ],
     ],
 ];

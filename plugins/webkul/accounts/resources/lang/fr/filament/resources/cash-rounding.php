@@ -32,6 +32,13 @@ return [
         ],
 
         'actions' => [
+            'edit' => [
+                'notification' => [
+                    'title' => 'Arrondi de caisse mis à jour',
+                    'body'  => "L'arrondi de caisse a été mis à jour avec succès.",
+                ],
+            ],
+
             'delete' => [
                 'notification' => [
                     'title' => 'Arrondi de caisse supprimé',

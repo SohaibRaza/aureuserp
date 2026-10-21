@@ -98,5 +98,14 @@ return [
             'status'   => 'Actif',
             'currency' => 'Devise',
         ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Listes de prix supprimées',
+                    'body'  => 'Les listes de prix sélectionnées ont été supprimées avec succès.',
+                ],
+            ],
+        ],
     ],
 ];

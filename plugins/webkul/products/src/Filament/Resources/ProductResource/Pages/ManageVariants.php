@@ -109,8 +109,7 @@ class ManageVariants extends ManageRelatedRecords
                         return $attributeName && $optionName ? "{$attributeName}: {$optionName}" : $optionName;
                     });
                 })
-                ->badge()
-                ->sortable(),
+                ->badge(),
             ...$table->getColumns(),
         ]);
 

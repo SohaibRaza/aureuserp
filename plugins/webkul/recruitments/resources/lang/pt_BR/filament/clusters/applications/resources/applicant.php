@@ -114,6 +114,13 @@ return [
                     'body'  => 'O candidato foi excluído com sucesso.',
                 ],
             ],
+
+            'restore' => [
+                'notification' => [
+                    'title' => 'Candidato restaurado',
+                    'body'  => 'O candidato foi restaurado com sucesso.',
+                ],
+            ],
         ],
 
         'groups' => [

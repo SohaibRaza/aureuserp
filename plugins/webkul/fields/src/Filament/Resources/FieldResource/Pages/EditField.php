@@ -23,7 +23,13 @@ class EditField extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            DeleteAction::make(),
+            DeleteAction::make()
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('fields::filament/resources/field/pages/edit-field.header-actions.delete.notification.title'))
+                        ->body(__('fields::filament/resources/field/pages/edit-field.header-actions.delete.notification.body')),
+                ),
         ];
     }
 

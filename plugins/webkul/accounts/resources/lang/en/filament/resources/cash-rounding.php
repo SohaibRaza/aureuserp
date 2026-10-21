@@ -32,6 +32,13 @@ return [
         ],
 
         'actions' => [
+            'edit' => [
+                'notification' => [
+                    'title' => 'Cash Rounding updated',
+                    'body'  => 'The cash rounding has been updated successfully.',
+                ],
+            ],
+
             'delete' => [
                 'notification' => [
                     'title' => 'Cash Rounding deleted',

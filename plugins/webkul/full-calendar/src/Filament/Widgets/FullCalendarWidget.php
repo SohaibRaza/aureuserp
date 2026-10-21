@@ -11,6 +11,7 @@ use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
+use Filament\Notifications\Notification;
 use Filament\Widgets\Widget;
 use Webkul\FullCalendar\Concerns\CanBeConfigured;
 use Webkul\FullCalendar\Concerns\InteractsWithEvents;
@@ -43,7 +44,13 @@ class FullCalendarWidget extends Widget implements HasActions, HasConfigurations
     protected function headerActions(): array
     {
         return [
-            CreateAction::make(),
+            CreateAction::make()
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('full-calendar::filament/widgets/full-calendar.header-actions.create.notification.title'))
+                        ->body(__('full-calendar::filament/widgets/full-calendar.header-actions.create.notification.body')),
+                ),
         ];
     }
 

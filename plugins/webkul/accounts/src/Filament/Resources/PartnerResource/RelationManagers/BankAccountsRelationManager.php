@@ -3,6 +3,7 @@
 namespace Webkul\Account\Filament\Resources\PartnerResource\RelationManagers;
 
 use Filament\Actions\CreateAction;
+use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
@@ -26,7 +27,13 @@ class BankAccountsRelationManager extends RelationManager
                     ->icon('heroicon-o-plus-circle')
                     ->mutateDataUsing(function (array $data): array {
                         return $data;
-                    }),
+                    })
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('accounts::filament/resources/partner/relation-manager/bank-account-relation-manager.create.notification.title'))
+                            ->body(__('accounts::filament/resources/partner/relation-manager/bank-account-relation-manager.create.notification.body'))
+                    ),
             ]);
     }
 }

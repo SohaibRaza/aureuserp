@@ -37,7 +37,13 @@ class EditPayment extends EditRecord
             BaseActions\MarkAsSendAdnUnsentAction::make(),
             BaseActions\CancelAction::make(),
             BaseActions\RejectAction::make(),
-            DeleteAction::make(),
+            DeleteAction::make()
+                ->successNotification(
+                    Notification::make()
+                        ->success()
+                        ->title(__('accounts::filament/resources/payment/pages/edit-payment.header-actions.delete.notification.title'))
+                        ->body(__('accounts::filament/resources/payment/pages/edit-payment.header-actions.delete.notification.body'))
+                ),
         ];
     }
 

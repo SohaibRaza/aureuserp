@@ -59,18 +59,16 @@ class SupportPlugin implements Plugin
             <script>
                 document.addEventListener('livewire:navigated', function() {
                     setTimeout(() => {
-                        const activeSidebarItem = document.querySelector('nav .fi-sidebar-item-active');
+                        const activeSidebarItem = document.querySelector('.fi-main-sidebar .fi-sidebar-item.fi-active')
+                            ?? document.querySelector('.fi-main-sidebar .fi-sidebar-group.fi-active');
 
-                        const sidebarWrapper = document.querySelector('nav.fi-sidebar-nav');
+                        const sidebarWrapper = document.querySelector('.fi-main-sidebar .fi-sidebar-nav');
 
-                        // Livewire navigation can render before the sidebar (or its
-                        // active item) is present. Treat that transient state as a
-                        // no-op instead of dereferencing null and breaking the page.
-                        if (! sidebarWrapper || ! activeSidebarItem) {
+                        if (! activeSidebarItem || activeSidebarItem.offsetParent === null || ! sidebarWrapper) {
                             return;
                         }
 
-                        sidebarWrapper.scrollTo(0, Math.max(0, activeSidebarItem.offsetTop - 250));
+                        sidebarWrapper.scrollTo(0, activeSidebarItem.offsetTop - window.innerHeight / 2);
                     }, 0);
                 });
             </script>

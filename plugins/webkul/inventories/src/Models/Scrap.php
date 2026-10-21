@@ -303,9 +303,12 @@ class Scrap extends Model
 
             $moveValues = $this->getInventoryMoveValues();
 
+            $lines = $moveValues['lines'];
+            unset($moveValues['lines']);
+
             $move = Move::create($moveValues);
 
-            foreach ($moveValues['lines'] as $lineValues) {
+            foreach ($lines as $lineValues) {
                 MoveLine::create(array_merge($lineValues, [
                     'move_id' => $move->id,
                 ]));

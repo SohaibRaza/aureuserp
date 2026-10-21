@@ -3,12 +3,15 @@
 namespace Webkul\Recruitment\Filament\Widgets;
 
 use Filament\Widgets\ChartWidget;
+use Filament\Widgets\Concerns\InteractsWithPageFilters;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Carbon;
 use Webkul\Recruitment\Models\Applicant;
 
 class ApplicantChartWidget extends ChartWidget
 {
+    use InteractsWithPageFilters;
+
     protected static ?int $sort = 2;
 
     protected int|string|array $columnSpan = 'full';

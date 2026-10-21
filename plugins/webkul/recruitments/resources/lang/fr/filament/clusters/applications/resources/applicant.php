@@ -114,6 +114,13 @@ return [
                     'body'  => 'Le candidat a été supprimé avec succès.',
                 ],
             ],
+
+            'restore' => [
+                'notification' => [
+                    'title' => 'Candidat restauré',
+                    'body'  => 'Le candidat a été restauré avec succès.',
+                ],
+            ],
         ],
 
         'groups' => [

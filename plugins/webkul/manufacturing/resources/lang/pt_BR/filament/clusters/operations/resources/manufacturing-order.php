@@ -116,6 +116,24 @@ return [
             'responsible'      => 'Responsável',
             'deadline'         => 'Prazo final',
         ],
+
+        'actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Ordem de produção excluída',
+                    'body'  => 'A ordem de produção foi excluída com sucesso.',
+                ],
+            ],
+        ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'Ordens de produção excluídas',
+                    'body'  => 'As ordens de produção selecionadas foram excluídas com sucesso.',
+                ],
+            ],
+        ],
     ],
 
     'infolist' => [

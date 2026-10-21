@@ -114,6 +114,13 @@ return [
                     'body'  => 'The applicant was successfully deleted.',
                 ],
             ],
+
+            'restore' => [
+                'notification' => [
+                    'title' => 'Applicant Restored',
+                    'body'  => 'The applicant was successfully restored.',
+                ],
+            ],
         ],
 
         'groups' => [

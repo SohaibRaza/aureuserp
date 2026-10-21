@@ -7,6 +7,7 @@ use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Grouping\Group as TableGroup;
 use Filament\Tables\Table;
@@ -117,11 +118,23 @@ class ManufacturingOrdersTable
             ->actions([
                 ViewAction::make(),
                 EditAction::make(),
-                DeleteAction::make(),
+                DeleteAction::make()
+                    ->successNotification(
+                        Notification::make()
+                            ->success()
+                            ->title(__('manufacturing::filament/clusters/operations/resources/manufacturing-order.table.actions.delete.notification.title'))
+                            ->body(__('manufacturing::filament/clusters/operations/resources/manufacturing-order.table.actions.delete.notification.body')),
+                    ),
             ])
             ->bulkActions([
                 BulkActionGroup::make([
-                    DeleteBulkAction::make(),
+                    DeleteBulkAction::make()
+                        ->successNotification(
+                            Notification::make()
+                                ->success()
+                                ->title(__('manufacturing::filament/clusters/operations/resources/manufacturing-order.table.bulk-actions.delete.notification.title'))
+                                ->body(__('manufacturing::filament/clusters/operations/resources/manufacturing-order.table.bulk-actions.delete.notification.body')),
+                        ),
                 ]),
             ]);
     }

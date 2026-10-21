@@ -15,6 +15,7 @@ use Filament\Tables;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
@@ -25,6 +26,7 @@ class LotsTable
     public static function configure(Table $table, array $customColumns = [], array $customFilters = []): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->withSum('internalQuantities as total_quantity', 'quantity'))
             ->columns(array_merge([
                 TextColumn::make('name')
                     ->label(__('inventories::filament/clusters/products/resources/lot.table.columns.name'))

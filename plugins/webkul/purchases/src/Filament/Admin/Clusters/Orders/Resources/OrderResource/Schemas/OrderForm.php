@@ -658,7 +658,8 @@ class OrderForm
                     ->default(0),
 
                 Hidden::make('from_requisition')
-                    ->default(false),
+                    ->default(false)
+                    ->dehydrated(false),
             ])
             ->mutateRelationshipDataBeforeCreateUsing(function (array $data, $record) {
                 $product = Product::find($data['product_id']);

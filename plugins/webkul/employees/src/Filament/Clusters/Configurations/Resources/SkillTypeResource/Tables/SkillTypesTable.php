@@ -43,7 +43,7 @@ class SkillTypesTable
                 TextColumn::make('color')
                     ->label(__('employees::filament/clusters/configurations/resources/skill-type.table.columns.color'))
                     ->toggleable(isToggledHiddenByDefault: false)
-                    ->formatStateUsing(fn (Model $skillType) => '<span class="flex h-5 w-5 rounded-full" style="background: var(--'.$skillType?->color.'-500)"></span>')
+                    ->formatStateUsing(fn (Model $skillType) => '<span class="flex h-5 w-5 rounded-full" style="background: var(--'.e($skillType?->color).'-500)"></span>')
                     ->html()
                     ->sortable(),
                 TextColumn::make('skills.name')

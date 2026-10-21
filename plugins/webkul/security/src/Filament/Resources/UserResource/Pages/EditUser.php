@@ -40,6 +40,8 @@ class EditUser extends EditRecord
                         'password' => Hash::make($data['new_password']),
                     ]);
 
+                    $record->revokeApiTokens();
+
                     Notification::make()
                         ->title(__('security::filament/resources/user/pages/edit-user.header-actions.change-password.notification.title'))
                         ->body(__('security::filament/resources/user/pages/edit-user.header-actions.change-password.notification.body'))

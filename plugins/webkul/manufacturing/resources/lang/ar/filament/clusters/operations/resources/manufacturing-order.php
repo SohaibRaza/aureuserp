@@ -116,6 +116,24 @@ return [
             'responsible'      => 'المسؤول',
             'deadline'         => 'الموعد النهائي',
         ],
+
+        'actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'تم حذف أمر التصنيع',
+                    'body'  => 'تم حذف أمر التصنيع بنجاح.',
+                ],
+            ],
+        ],
+
+        'bulk-actions' => [
+            'delete' => [
+                'notification' => [
+                    'title' => 'تم حذف أوامر التصنيع',
+                    'body'  => 'تم حذف أوامر التصنيع المحددة بنجاح.',
+                ],
+            ],
+        ],
     ],
 
     'infolist' => [

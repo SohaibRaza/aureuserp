@@ -284,6 +284,11 @@ return [
                 'notification' => [
                     'title' => 'Empleados eliminados',
                     'body'  => 'Los empleados se han eliminado correctamente.',
+
+                    'error' => [
+                        'title' => 'No se pudieron eliminar los empleados',
+                        'body'  => 'Los empleados no se pueden eliminar porque están actualmente en uso.',
+                    ],
                 ],
             ],
 
