@@ -26,6 +26,7 @@ jobs:
         operating-systems: [ubuntu-latest]
         php-versions: ['8.4']
         db: [mysql, pgsql]
+        suite_group: [accounting, inventory, sales, logistics, platform]
         include:
           - db: mysql
             db-label: MySQL
@@ -45,7 +46,7 @@ jobs:
             db-health: pg_isready -U postgres
             php-db-ext: pdo_pgsql
 
-    name: PHP ${{ matrix.php-versions }} | ${{ matrix.db-label }} test on ${{ matrix.operating-systems }}
+    name: PHP ${{ matrix.php-versions }} | ${{ matrix.db-label }} ${{ matrix.suite_group }} tests on ${{ matrix.operating-systems }}
 
     services:
       database:
@@ -91,4 +92,13 @@ jobs:
             --admin-password="admin123"
 
       - name: Running Pest Test
-        run: vendor/bin/pest --colors=always --stop-on-defect
+        run: |
+          case "${{ matrix.suite_group }}" in
+            accounting) suites='ReconciliationFeature,AccountFeature,AccountingFeature' ;;
+            inventory) suites='InventoryFeature,ManufacturingFeature' ;;
+            sales) suites='SaleFeature,PurchaseFeature' ;;
+            logistics) suites='LogisticsFeature,PointOfSaleFeature' ;;
+            platform) suites='ProjectFeature,PartnerFeature,ProductFeature,SupportFeature,EmployeeFeature,SecurityFeature' ;;
+            *) echo "Unknown Pest suite group: ${{ matrix.suite_group }}" >&2; exit 1 ;;
+          esac
+          vendor/bin/pest --colors=always --stop-on-defect --testsuite="$suites"
