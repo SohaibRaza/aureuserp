@@ -126,9 +126,12 @@ it('protects completed warehouse issues before a multi-step delivery reaches the
 });
 
 it('waits for an Inventory issue and then rejects a reduction below the committed issue', function (): void {
-    expect(DB::connection()->getDriverName())->toBe('pgsql');
-    $database = DB::connection()->getDatabaseName();
-    expect($database)->toMatch('/^aureuserp_[A-Za-z0-9_]+_testing$/');
+    $connection = DB::connection();
+    $driver = $connection->getDriverName();
+    expect($driver)->toBeIn(['pgsql', 'mysql']);
+    $database = $connection->getDatabaseName();
+    $connectionConfig = config("database.connections.{$driver}");
+    expect($database)->toMatch('/^aureuserp_(?:[A-Za-z0-9_]+_)?testing$/');
     $order = SaleHelper::confirmedOrder($this->warehouse, SaleHelper::product(), 10);
     $line = $order->lines()->sole();
     $move = $line->inventoryMoves()->sole();
@@ -147,7 +150,9 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 Illuminate\Support\Facades\Auth::loginUsingId((int) $argv[3]);
 $line = Webkul\Sale\Models\OrderLine::findOrFail((int) $argv[2]);
 $directory = $argv[4];
-file_put_contents($directory.'/ready', (string) Illuminate\Support\Facades\DB::selectOne('select pg_backend_pid() as pid')->pid);
+$connection = Illuminate\Support\Facades\DB::connection();
+$identityQuery = $connection->getDriverName() === 'pgsql' ? 'SELECT pg_backend_pid() AS pid' : 'SELECT CONNECTION_ID() AS pid';
+file_put_contents($directory.'/ready', (string) $connection->selectOne($identityQuery)->pid);
 $deadline = microtime(true) + 20;
 while (! file_exists($directory.'/go') && microtime(true) < $deadline) { usleep(10000); }
 if (! file_exists($directory.'/go')) { exit(2); }
@@ -159,8 +164,17 @@ try {
 }
 PHP;
     $process = new Process([PHP_BINARY, '-d', 'memory_limit=512M', '-r', $worker, base_path(), (string) $line->id, (string) $userId, $directory], base_path(), [
-        ...$_ENV, 'APP_ENV' => 'testing', 'DB_CONNECTION' => 'pgsql',
-        'DB_DATABASE'       => $database, 'AUREUSERP_TEST_REUSE_DATABASE' => '1',
+        ...$_ENV,
+        'APP_ENV'                       => 'testing',
+        'DB_CONNECTION'                 => $driver,
+        'DB_HOST'                       => (string) ($connectionConfig['host'] ?? ''),
+        'DB_PORT'                       => (string) ($connectionConfig['port'] ?? ''),
+        'DB_SOCKET'                     => (string) ($connectionConfig['unix_socket'] ?? ''),
+        'DB_URL'                        => '',
+        'DB_USERNAME'                   => (string) ($connectionConfig['username'] ?? ''),
+        'DB_PASSWORD'                   => (string) ($connectionConfig['password'] ?? ''),
+        'DB_DATABASE'                   => $database,
+        'AUREUSERP_TEST_REUSE_DATABASE' => '1',
     ], timeout: 40);
     try {
         $process->start();
@@ -177,15 +191,26 @@ PHP;
         $waiting = false;
         $deadline = microtime(true) + 10;
         do {
-            DB::statement('select pg_stat_clear_snapshot()');
-            $activity = DB::selectOne('select wait_event_type, query from pg_stat_activity where pid = ?', [$pid]);
-            $waiting = $activity?->wait_event_type === 'Lock';
+            if ($driver === 'pgsql') {
+                DB::statement('select pg_stat_clear_snapshot()');
+                $activity = DB::selectOne('select wait_event_type, query from pg_stat_activity where pid = ?', [$pid]);
+                $waiting = $activity?->wait_event_type === 'Lock';
+            } else {
+                $waiting = (bool) DB::selectOne('SELECT EXISTS (
+                    SELECT 1
+                    FROM performance_schema.data_lock_waits AS waits
+                    JOIN performance_schema.threads AS requesting
+                        ON requesting.THREAD_ID = waits.REQUESTING_THREAD_ID
+                    WHERE requesting.PROCESSLIST_ID = ?
+                ) AS blocked', [$pid])->blocked;
+                $activity = DB::selectOne('SELECT INFO AS query FROM information_schema.PROCESSLIST WHERE ID = ?', [$pid]);
+            }
             if (! $waiting) {
                 usleep(10000);
             }
         } while (! $waiting && $process->isRunning() && microtime(true) < $deadline);
         expect($waiting)->toBeTrue()
-            ->and($activity->query)->toContain('products')->toContain('for update');
+            ->and(strtolower((string) $activity?->query))->toContain('products')->toContain('for update');
         DB::commit();
         $process->wait();
         expect($process->isSuccessful())->toBeTrue();

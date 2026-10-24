@@ -4,6 +4,8 @@ use Filament\Facades\Filament;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
+use Webkul\Partner\Enums\AddressType;
+use Webkul\Partner\Models\Partner;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\PointOfSale\Enums\SessionState;
@@ -50,6 +52,14 @@ beforeEach(function () {
     DB::table('products_products')->where('id', $this->product->id)->update(['available_in_pos' => true]);
 
     InventoryHelper::stockUp($this->product, $this->warehouse->lotStockLocation, 50);
+});
+
+it('preserves the partner model when adding a constrained existence column', function () {
+    $query = Partner::query()->withExists([
+        'addresses as has_delivery_address' => fn ($query) => $query->where('sub_type', AddressType::DELIVERY),
+    ]);
+
+    expect($query->getModel())->toBeInstanceOf(Partner::class);
 });
 
 it('renders the terminal for a live session', function () {

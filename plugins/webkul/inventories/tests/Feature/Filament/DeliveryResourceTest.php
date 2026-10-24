@@ -1,6 +1,5 @@
 <?php
 
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
@@ -11,8 +10,10 @@ use Webkul\Inventory\Filament\Clusters\Operations\Resources\DeliveryResource\Pag
 use Webkul\Inventory\Filament\Clusters\Operations\Resources\DeliveryResource\Pages\EditDelivery;
 use Webkul\Inventory\Filament\Clusters\Operations\Resources\DeliveryResource\Pages\ListDeliveries;
 use Webkul\Inventory\Filament\Clusters\Operations\Resources\DeliveryResource\Pages\ViewDelivery;
+use Webkul\Inventory\Models\Delivery;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
+use Webkul\Support\Services\CompanyContext;
 
 require_once __DIR__.'/../../../../support/tests/Helpers/TestBootstrapHelper.php';
 require_once __DIR__.'/../../../../support/tests/Helpers/FilamentHelper.php';
@@ -199,7 +200,7 @@ it('offers the check availability action once the delivery is confirmed', functi
 });
 
 it('offers the return action only once the delivery is done', function () {
-    FilamentHelper::actingAs(['view_any_inventory_delivery', 'view_inventory_delivery']);
+    FilamentHelper::actingAs(['view_any_inventory_delivery', 'view_inventory_delivery', 'update_inventory_delivery']);
 
     InventoryHelper::stockUp($this->product, $this->stock, 10);
 
@@ -222,7 +223,7 @@ it('offers the return action only once the delivery is done', function () {
 });
 
 it('cancels a delivery through the cancel action', function () {
-    FilamentHelper::actingAs(['view_any_inventory_delivery', 'view_inventory_delivery']);
+    FilamentHelper::actingAs(['view_any_inventory_delivery', 'view_inventory_delivery', 'update_inventory_delivery']);
 
     $delivery = InventoryHelper::delivery($this->warehouse, [[$this->product, 5]]);
 
@@ -265,12 +266,16 @@ it('does not find a delivery of another company by searching its reference', fun
 
 it('refuses to open a delivery owned by another company', function () {
     $delivery = InventoryHelper::delivery($this->warehouse, [[$this->product, 5]]);
+    $otherCompany = CompanyHelper::company();
 
-    FilamentHelper::actingAsCompanyUser(CompanyHelper::company(), [
+    FilamentHelper::actingAsCompanyUser($otherCompany, [
         'view_any_inventory_delivery',
         'view_inventory_delivery',
     ]);
 
-    expect(fn () => Livewire::test(ViewDelivery::class, ['record' => $delivery->id]))
-        ->toThrow(ModelNotFoundException::class);
+    expect($delivery->company_id)->not->toBe($otherCompany->id)
+        ->and(app(CompanyContext::class)->activeIds())->toBe([$otherCompany->id])
+        ->and(Delivery::query()->whereKey($delivery->id)->exists())->toBeFalse();
+
+    Livewire::test(ViewDelivery::class, ['record' => $delivery->id])->assertNotFound();
 });

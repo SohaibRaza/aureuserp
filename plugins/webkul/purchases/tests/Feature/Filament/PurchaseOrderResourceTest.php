@@ -1,9 +1,9 @@
 <?php
 
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
+use Webkul\Inventory\Enums\OperationState;
 use Webkul\PluginManager\Models\Plugin;
 use Webkul\PluginManager\Package;
 use Webkul\Purchase\Enums\OrderInvoiceStatus;
@@ -15,6 +15,7 @@ use Webkul\Purchase\Filament\Admin\Clusters\Orders\Resources\PurchaseOrderResour
 use Webkul\Purchase\Filament\Admin\Clusters\Orders\Resources\PurchaseOrderResource\Pages\ViewPurchaseOrder;
 use Webkul\Purchase\Filament\Admin\Clusters\Orders\Resources\QuotationResource\Pages\EditQuotation;
 use Webkul\Purchase\Models\Order;
+use Webkul\Support\Services\CompanyContext;
 
 require_once __DIR__.'/../../../../support/tests/Helpers/TestBootstrapHelper.php';
 require_once __DIR__.'/../../../../support/tests/Helpers/FilamentHelper.php';
@@ -94,7 +95,22 @@ it('confirms a draft RFQ into a purchase order through the action', function () 
         ->assertOk()
         ->callAction(ConfirmAction::class);
 
-    expect($order->refresh()->state)->toBe(OrderState::PURCHASE);
+    $confirmedOrder = $order->refresh();
+    $operations = $confirmedOrder->operations()->get(['id', 'state']);
+    $diagnostic = [
+        'order_state'                => $confirmedOrder->state->value,
+        'pending_approval'           => $confirmedOrder->state === OrderState::TO_APPROVE,
+        'inventory_operation_count'  => $operations->count(),
+        'inventory_operations'       => $operations->map(fn ($operation): array => [
+            'id'    => $operation->id,
+            'state' => $operation->state->value,
+        ])->all(),
+    ];
+
+    expect($diagnostic['order_state'])->toBe(OrderState::PURCHASE->value)
+        ->and($diagnostic['pending_approval'])->toBeFalse()
+        ->and($diagnostic['inventory_operation_count'])->toBe(1)
+        ->and($diagnostic['inventory_operations'][0]['state'])->toBe(OperationState::ASSIGNED->value);
 });
 
 it('renders the purchase order create page', function () {
@@ -207,17 +223,17 @@ it('hides a purchase order owned by another company from the list', function () 
 });
 
 it('refuses to open a purchase order owned by another company', function () {
-    FilamentHelper::actingAsCompanyUser(PurchaseHelper::company(), [
-        'view_any_purchase_purchase::order',
-    ]);
-
     $order = purchaseOrderRecord();
+    $otherCompany = CompanyHelper::company();
 
-    FilamentHelper::actingAsCompanyUser(CompanyHelper::company(), [
+    FilamentHelper::actingAsCompanyUser($otherCompany, [
         'view_any_purchase_purchase::order',
         'view_purchase_purchase::order',
     ]);
 
-    expect(fn () => Livewire::test(ViewPurchaseOrder::class, ['record' => $order->id]))
-        ->toThrow(ModelNotFoundException::class);
+    expect($order->company_id)->not->toBe($otherCompany->id)
+        ->and(app(CompanyContext::class)->activeIds())->toBe([$otherCompany->id])
+        ->and(Order::query()->whereKey($order->id)->exists())->toBeFalse();
+
+    Livewire::test(ViewPurchaseOrder::class, ['record' => $order->id])->assertNotFound();
 });

@@ -210,7 +210,7 @@ it('keeps old revisions and records a new confirmation after cancellation', func
     SaleOrder::cancelSaleOrder($order->refresh());
     SaleOrder::backToQuotation($order->refresh());
     SaleHelper::confirm($order);
-    expect($line->quantityCommitments()->pluck('revision')->all())->toBe([1, 2]);
+    expect($line->quantityCommitments()->pluck('revision')->sort()->values()->all())->toBe([1, 2]);
 });
 
 it('prevents locked or unauthorized confirmed quantity changes', function (): void {

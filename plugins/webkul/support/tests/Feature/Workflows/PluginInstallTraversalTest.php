@@ -31,6 +31,14 @@ class TraversalTestInstallCommand extends InstallCommand
 }
 
 beforeEach(function (): void {
+    // MySQL commits DDL implicitly. A successful synthetic migration in the
+    // preceding test can therefore commit its plugin metadata fixture as well.
+    DB::table('plugin_dependencies')
+        ->whereIn('plugin_id', Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->select('id'))
+        ->orWhereIn('dependency_id', Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->select('id'))
+        ->delete();
+    Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->delete();
+
     $this->savedInstallerPlugins = is_object(Package::$plugins) ? clone Package::$plugins : Package::$plugins;
     TraversalTestInstallCommand::$visits = [];
     TraversalTestInstallCommand::$permissionRefreshes = [];
@@ -39,6 +47,11 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    DB::table('plugin_dependencies')
+        ->whereIn('plugin_id', Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->select('id'))
+        ->orWhereIn('dependency_id', Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->select('id'))
+        ->delete();
+    Plugin::query()->whereIn('name', ['review_root', 'review_left', 'review_right', 'review_shared'])->delete();
     Package::$plugins = $this->savedInstallerPlugins;
     File::deleteDirectory($this->installerRoot);
 });

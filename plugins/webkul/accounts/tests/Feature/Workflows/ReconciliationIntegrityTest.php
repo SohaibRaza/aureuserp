@@ -75,7 +75,8 @@ it('bounds account relationship selects as a reconciliation plan grows', functio
             expect(fn () => app(Reconciler::class)->reconcile($lines))
                 ->toThrow(ValidationException::class, 'You can only reconcile posted entries.');
             $accountSelects[] = collect($connection->getQueryLog())
-                ->filter(fn (array $query): bool => (bool) preg_match('/\bfrom\s+"?accounts_accounts"?/i', $query['query']))
+                // PostgreSQL quotes identifiers with double quotes; MySQL uses backticks.
+                ->filter(fn (array $query): bool => (bool) preg_match('/\bfrom\s+["`]?accounts_accounts["`]?\b/i', $query['query']))
                 ->count();
         } finally {
             $connection->disableQueryLog();
