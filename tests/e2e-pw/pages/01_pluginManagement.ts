@@ -40,6 +40,29 @@ export class PluginManagementPage {
         await this.processAllPlugins('uninstall');
     }
 
+    /** Verify the Logistics guard without removing unrelated ERP plugins. */
+    async expectUninstallBlockedWithoutChangingInstalledPlugins(pluginName: string) {
+        await this.gotoPluginTab('installed');
+        await this.showAllPluginsOnOnePage();
+
+        const installedBefore = (await this.erpLocators.pluginName.allInnerTexts()).map(name => name.trim()).sort();
+        const index = installedBefore.findIndex(name => name.toLowerCase() === pluginName.toLowerCase());
+        await expect(index, `Expected ${pluginName} to be installed`).toBeGreaterThanOrEqual(0);
+
+        const currentNames = (await this.erpLocators.pluginName.allInnerTexts()).map(name => name.trim());
+        const currentIndex = currentNames.findIndex(name => name.toLowerCase() === pluginName.toLowerCase());
+        await this.erpLocators.pluginActionsButton.nth(currentIndex).click();
+        await this.erpLocators.pluginUninstallOption.click();
+        await expect(this.erpLocators.pluginUninstallModalReady).toBeVisible();
+        await this.erpLocators.pluginUninstallConfirmButton.click();
+        await expect(this.erpLocators.pluginActionFailedNotification).toBeVisible();
+
+        await this.gotoPluginTab('installed');
+        await this.showAllPluginsOnOnePage();
+        const installedAfter = (await this.erpLocators.pluginName.allInnerTexts()).map(name => name.trim()).sort();
+        expect(installedAfter).toEqual(installedBefore);
+    }
+
     /**
      * Install plugin by name if not installed
      */

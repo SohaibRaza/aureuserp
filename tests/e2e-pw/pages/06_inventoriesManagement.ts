@@ -1177,7 +1177,7 @@ export class InventoriesManagementPage {
 
     /**
      * Assert that the product's on-hand row at `location` shows `quantity`.
-     * On Hand is a TextInputColumn so the value lives in the input, not text.
+     * Editable quantity rows use an input; tracked stock may render the value as text.
      */
     async expectOnHandQuantityRow(productName: string, location: string, quantity: string) {
         const l = this.erpLocators;
@@ -1185,9 +1185,16 @@ export class InventoriesManagementPage {
 
         const row = l.inventoryProductQuantityTableRows.filter({ hasText: location }).first();
         const onHandInput = row.locator(l.inventoryProductQuantityOnHandInlineInputs).first();
+        const onHandCell = row.locator(l.inventoryProductQuantityOnHandCells).first();
         // Allow trailing decimal padding (Filament formats numerics as "30.0000").
         const escaped = quantity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        await expect(onHandInput).toHaveValue(new RegExp(`^${escaped}(\\.0+)?$`));
+        const expected = new RegExp(`^\\s*${escaped}(\\.0+)?\\s*$`);
+
+        if (await onHandInput.count()) {
+            await expect(onHandInput).toHaveValue(expected);
+        } else {
+            await expect(onHandCell).toHaveText(expected);
+        }
     }
 
     /**

@@ -20,13 +20,8 @@ test.describe('Plugin Management', () => {
         await pluginManagementPage.installAllPlugins();
     });
 
-    /**
-     * All plugins uninstallation test
-     */
-    test('All Plugins Uninstallation Test', async ({ adminPage }) => {
-        test.setTimeout(ALL_PLUGINS_TIMEOUT);
-
+    test('protects installed Logistics from uninstallation', async ({ adminPage }) => {
         const pluginManagementPage = new PluginManagementPage(adminPage);
-        await pluginManagementPage.uninstallAllPlugins();
+        await pluginManagementPage.expectUninstallBlockedWithoutChangingInstalledPlugins('logistics');
     });
 });

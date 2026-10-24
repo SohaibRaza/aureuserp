@@ -612,6 +612,29 @@ export class PurchaseFlowPage {
         await this.page.waitForLoadState("networkidle").catch(() => undefined);
         await this.page.waitForTimeout(1500);
         await expect(this.erpLocators.purchaseQuotationConfirmOrderButton).toHaveCount(0);
+
+        const orderRef = this.currentRecordRef();
+        const stateStepper = this.page.locator('[wire\\:key$="form.state"]').first();
+        const orderState = await stateStepper.locator('input[type="radio"]:checked').getAttribute("value").catch(() => null);
+        const approvalNotifications = await this.page
+            .locator(".fi-no-notification-title")
+            .allInnerTexts()
+            .catch(() => [] as string[]);
+        const orderEditUrl = this.page.url();
+
+        await this.openReceiptsForCurrentOrder();
+        const receipts = await this.readReceiptRows();
+        console.info("PURCHASE_CONFIRMATION_DIAGNOSTIC", JSON.stringify({
+            orderId: orderRef.id,
+            orderState: orderState ?? "unavailable",
+            pendingApproval: orderState === "to_approve",
+            approvalNotifications: approvalNotifications.map((value) => value.trim()),
+            linkedInventoryOperations: receipts.map(({ id, reference, state }) => ({ id, reference, state })),
+            inventoryOperationCount: receipts.length,
+        }));
+
+        await this.safeGoto(orderEditUrl);
+        await this.page.waitForLoadState("networkidle").catch(() => undefined);
     }
 
     /**
